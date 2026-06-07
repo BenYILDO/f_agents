@@ -31,8 +31,12 @@ _API_KEY_ENV_VARS = (
 
 @pytest.fixture(autouse=True)
 def _dummy_api_keys(monkeypatch):
+    # Treat an empty-string value as absent too: tradingagents/__init__.py
+    # runs load_dotenv() on import, so a blank ``DEEPSEEK_API_KEY=`` line in a
+    # developer's .env would otherwise leak in as "" and make client
+    # construction raise "API key is not set" instead of getting a placeholder.
     for env_var in _API_KEY_ENV_VARS:
-        monkeypatch.setenv(env_var, os.environ.get(env_var, "placeholder"))
+        monkeypatch.setenv(env_var, os.environ.get(env_var) or "placeholder")
 
 
 @pytest.fixture()

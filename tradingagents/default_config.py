@@ -125,6 +125,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
         ".AX":  "^AXJO",       # Australia (ASX 200)
         ".SS":  "000001.SS",   # Shanghai (SSE Composite)
         ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component)
+        ".IS":  "XU100.IS",    # Borsa İstanbul (BIST 100)
         "":     "SPY",         # default for US-listed tickers (no suffix)
     },
 })

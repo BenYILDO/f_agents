@@ -34,6 +34,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
     get_news,
+    resolve_instrument_identity,
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
@@ -41,6 +42,9 @@ from tradingagents.agents.utils.structured import (
 )
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.investing_news import fetch_investing_news
+from tradingagents.dataflows.symbol_utils import is_bist_ticker
+from tradingagents.dataflows.turkish_news import fetch_turkish_market_news
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -63,21 +67,38 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
-
-        system_message = _build_system_message(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
-        )
+        # Pre-fetch sources. Each fetcher degrades gracefully and returns a
+        # string (no exceptions surface from here), so the LLM always sees
+        # something — either real data or a clear placeholder.
+        #
+        # BIST (.IS) tickers route to Turkish-language news instead of
+        # StockTwits/Reddit, which have no Turkish retail coverage and return
+        # empty placeholders for these names (see turkish_news.py).
+        if is_bist_ticker(ticker):
+            company_name = resolve_instrument_identity(ticker).get("company_name")
+            news_block = get_news.func(ticker, start_date, end_date)
+            investing_block = fetch_investing_news(ticker)
+            turkish_block = fetch_turkish_market_news(ticker, company_name)
+            system_message = _build_bist_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                investing_block=investing_block,
+                turkish_block=turkish_block,
+            )
+        else:
+            news_block = get_news.func(ticker, start_date, end_date)
+            stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
+            reddit_block = fetch_reddit_posts(ticker)
+            system_message = _build_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                stocktwits_block=stocktwits_block,
+                reddit_block=reddit_block,
+            )
 
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -179,6 +200,78 @@ Fill the following fields:
 - **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
 - **confidence**: low / medium / high, based on data quality and sample size.
 - **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
+
+{get_language_instruction()}"""
+
+
+def _build_bist_system_message(
+    *,
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    news_block: str,
+    investing_block: str,
+    turkish_block: str,
+) -> str:
+    """Assemble the sentiment-analyst system message for a Borsa İstanbul ticker.
+
+    BIST names have no meaningful StockTwits/Reddit footprint, so this variant
+    pairs yfinance's (mostly English, international-desk) news with two Turkish-
+    language sources: company-specific Investing.com news that republishes KAP
+    material disclosures, and broader Turkish market/macro headlines. Output
+    fields match the standard variant so the :class:`SentimentReport` schema is
+    unchanged."""
+    return f"""You are a financial market sentiment analyst covering Borsa İstanbul (BIST). Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary news sources that have already been collected for you.
+
+## Data sources (pre-fetched, in this prompt)
+
+### International news — Yahoo Finance, past 7 days
+Mostly English-language, international-desk framing (global wires, earnings coverage). Fact-driven, slower-moving signal; reflects how foreign investors see the name.
+
+<start_of_news>
+{news_block}
+<end_of_news>
+
+### Company-specific Turkish news & KAP disclosures — Investing.com TR
+Company-level Turkish headlines for this exact ticker. Turkish outlets republish the company's KAP material disclosures (özel durum açıklamaları) here — dividend decisions (kâr/temettü dağıtımı), board/management changes (yönetim kurulu değişikliği), share buybacks (pay alım/satım), capital raises, and major investments. Treat these as the closest available proxy for official disclosure flow; they are events, not opinion, and are the highest-signal company-specific input in this prompt.
+
+<start_of_company_turkish_news>
+{investing_block}
+<end_of_company_turkish_news>
+
+### Turkish market/macro news — Investing.com TR (borsa) + BloombergHT
+Broader local-language market and macro framing for context (BIST direction, TCMB/rate and FX/lira moves, sector themes). Use as backdrop, not as a company-specific catalyst. Note: Turkish retail social platforms (the StockTwits/Reddit equivalents) are not available for BIST names, so this local news flow plus the company block above are your primary local-sentiment proxies.
+
+<start_of_turkish_news>
+{turkish_block}
+<end_of_turkish_news>
+
+## How to analyze this data (best practices)
+
+1. **Lead with the company-specific Turkish block / KAP disclosures.** A dividend cancellation, management shake-up, or major investment is a concrete, market-moving event. Weight these above both macro headlines and opinion-driven commentary.
+
+2. **Weigh local vs. international framing.** When Turkish-language coverage is bullish but international wires are quiet or bearish (or vice versa), that divergence is itself a signal — local flow frequently leads on Turkish names.
+
+3. **Separate company-specific signal from macro.** The third block is market/macro context. Macro themes (TCMB/interest-rate decisions, inflation prints, FX/lira moves, geopolitics) move the whole market; weight them as backdrop, not as a company-specific catalyst.
+
+4. **Distinguish opinion from event.** A KAP-driven disclosure or earnings headline is an event; an analyst's market commentary is opinion. Both are inputs but should be weighted differently.
+
+5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That is the dominant narrative driving current sentiment.
+
+6. **Be honest about data limits.** If the company-specific block returned a "<...bulunamadı>" / "<...render edilemedi>" placeholder, or a source is otherwise "<unavailable>", the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative.
+
+7. **Identify catalysts and risks** emerging across sources — upcoming earnings, capacity/expansion news, regulatory or FX exposure, sector-wide moves.
+
+8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call. Remember prices are quoted in Turkish lira (TRY).
+
+## Output fields
+
+Fill the following fields:
+
+- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when sources point in clearly different directions; Neutral only when both sources are genuinely silent.
+- **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
+- **confidence**: low / medium / high, based on data quality and sample size (lower it when only general market headlines were available).
+- **narrative**: Full source-by-source breakdown, local-vs-international divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
 
 {get_language_instruction()}"""
 

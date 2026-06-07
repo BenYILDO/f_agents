@@ -15,6 +15,35 @@ try:
 except ImportError:
     pass
 
+# Repair a stale TLS CA-bundle pointer before any httpx/LLM client is built.
+# Some environments (notably the VSCode integrated terminal's Python extension,
+# or a leftover conda/venv) inject SSL_CERT_FILE / REQUESTS_CA_BUNDLE pointing at
+# a cacert.pem from a *different* interpreter that doesn't exist here. httpx then
+# raises ``FileNotFoundError`` while constructing the OpenAI client, breaking every
+# LLM and data call. We only act when the referenced path is missing — a valid,
+# user-chosen bundle is left untouched — repointing to certifi's bundle (or
+# dropping the var) so requests work from any entry point (CLI, app, scripts).
+import os as _os
+
+def _repair_ca_env() -> None:
+    try:
+        import certifi
+        good = certifi.where()
+    except Exception:
+        good = None
+    for _var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        _path = _os.environ.get(_var)
+        if _path and not _os.path.exists(_path):
+            if good:
+                _os.environ[_var] = good
+            else:
+                _os.environ.pop(_var, None)
+    _dir = _os.environ.get("SSL_CERT_DIR")
+    if _dir and not _os.path.isdir(_dir):
+        _os.environ.pop("SSL_CERT_DIR", None)
+
+_repair_ca_env()
+
 # langchain-core 1.3.3 calls surface_langchain_deprecation_warnings() in
 # its own __init__, which prepends default-action filters for its
 # subclassed warning categories. To suppress a specific warning we must

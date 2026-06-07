@@ -1,0 +1,17 @@
+# Streamlit yapılandırması — BIST TradingAgents arayüzü
+#
+# fileWatcherType = "none": Streamlit'in kaynak-izleyicisini kapatır. Bağımlılık
+# zincirinde gelen ağır kütüphaneler (transformers/torch) izleyici tarafından
+# yeniden import edilirken terminali "ModuleNotFoundError: torchvision" benzeri
+# gürültüyle dolduruyor ve analiz sırasında ara sıra FileNotFoundError'a yol
+# açıyordu. Hot-reload'a ihtiyacımız yok; kapatmak hem gürültüyü hem yarışı bitirir.
+[server]
+fileWatcherType = "none"
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+# Modül importlarını magic ile tekrar tetikleme; ağır bağımlılıklarla daha kararlı.
+fastReruns = false

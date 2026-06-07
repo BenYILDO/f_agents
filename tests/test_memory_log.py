@@ -573,6 +573,16 @@ class TestDeferredReflection:
         assert TradingAgentsGraph._resolve_benchmark(mock_graph, "600519.SS") == "000001.SS"
         assert TradingAgentsGraph._resolve_benchmark(mock_graph, "000001.SZ") == "399001.SZ"
 
+    def test_resolve_benchmark_bist(self):
+        """Borsa İstanbul tickers (.IS) route to the BIST 100 index (uses the
+        real default benchmark_map so the actual map entry is exercised)."""
+        from tradingagents.default_config import DEFAULT_CONFIG
+        mock_graph = MagicMock(spec=TradingAgentsGraph)
+        mock_graph.config = {"benchmark_ticker": None,
+                             "benchmark_map": DEFAULT_CONFIG["benchmark_map"]}
+        assert TradingAgentsGraph._resolve_benchmark(mock_graph, "THYAO.IS") == "XU100.IS"
+        assert TradingAgentsGraph._resolve_benchmark(mock_graph, "GARAN.IS") == "XU100.IS"
+
     def test_resolve_benchmark_us_ticker_defaults_to_spy(self):
         """US tickers (no dotted suffix) take the empty-suffix entry."""
         mock_graph = MagicMock(spec=TradingAgentsGraph)

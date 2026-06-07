@@ -129,3 +129,13 @@ def normalize_symbol(raw: str) -> str:
 def is_yahoo_safe(symbol: str) -> bool:
     """True when ``symbol`` only contains characters Yahoo symbols use."""
     return bool(symbol) and _YAHOO_SAFE.fullmatch(symbol) is not None
+
+
+def is_bist_ticker(symbol: str) -> bool:
+    """True when ``symbol`` is a Borsa İstanbul listing (Yahoo ``.IS`` suffix).
+
+    Used to route BIST tickers to Turkish-language data sources (e.g. the
+    sentiment analyst swaps StockTwits/Reddit — which have no Turkish retail
+    coverage — for Turkish news feeds). Purely syntactic, no network call.
+    """
+    return isinstance(symbol, str) and symbol.strip().upper().endswith(".IS")

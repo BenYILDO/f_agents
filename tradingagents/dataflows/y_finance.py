@@ -270,6 +270,8 @@ def get_fundamentals(
 
         fields = [
             ("Name", info.get("longName")),
+            ("Currency", info.get("currency")),
+            ("Financial Currency", info.get("financialCurrency")),
             ("Sector", info.get("sector")),
             ("Industry", info.get("industry")),
             ("Market Cap", info.get("marketCap")),
