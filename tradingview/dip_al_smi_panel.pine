@@ -1,0 +1,60 @@
+//@version=5
+// ============================================================================
+// BONUS: SMI Osilatör Paneli  (mavi SMI · turuncu sinyal · mor VWMA)
+// Ana indikatörün "motorunu" görmek için ayrı panelde çalışır (overlay=false).
+// AL/SAT noktalarını panelde de işaretler. Ana indikatörle birlikte kullan.
+// ============================================================================
+indicator("SMI Paneli (Dip-Al motoru)", overlay=false)
+
+kLen    = input.int(10, "SMI %K Uzunluk")
+dLen    = input.int(3,  "SMI %D Yumuşatma")
+sigLen  = input.int(3,  "Sinyal EMA")
+vwmaLen = input.int(7,  "SMI VWMA (HAHO)")
+bbLen   = input.int(20, "Bollinger Uzunluk (onay)")
+armBars = input.int(8,  "Dip penceresi (bar)")
+minGap  = input.float(2.0, "Min SMI-VWMA farkı")
+entryCeil=input.float(40.0, "AL üst SMI sınırı")
+scoreLen= input.int(14, "Fiyat skoru uzunluğu")
+minSell = input.int(2,  "Min SAT teyidi")
+
+hh        = ta.highest(high, kLen)
+ll        = ta.lowest(low,  kLen)
+rel       = close - (hh + ll) / 2.0
+rng       = hh - ll
+smoothRel = ta.ema(ta.ema(rel, dLen), dLen)
+smoothRng = ta.ema(ta.ema(rng, dLen), dLen)
+smi        = smoothRng != 0 ? 100.0 * smoothRel / (smoothRng / 2.0) : 0.0
+signalLine = ta.ema(smi, sigLen)
+smiVwma    = ta.vwma(smi, vwmaLen)
+basis      = ta.sma(close, bbLen)
+upper      = basis + 2 * ta.stdev(close, bbLen)
+score      = ta.stoch(close, high, low, scoreLen)
+
+// PRO mantık (dip_al_sinyal.pine ile aynı): teyitli + dip döngüsünde tek sinyal
+newDip = ta.crossover(smi, signalLine) and smi < 0
+var bool bFired = false
+if newDip
+    bFired := false
+inWin = not na(ta.barssince(newDip)) and ta.barssince(newDip) <= armBars
+buySignal = inWin and not bFired and ta.crossover(smi, smiVwma) and (smi - smiVwma) >= minGap and smi > smi[1] and smi < entryCeil and close > basis
+if buySignal
+    bFired := true
+conf = (close >= upper*0.99 ? 1 : 0) + (volume < ta.sma(volume,5) ? 1 : 0) + (score > 50 ? 1 : 0)
+var bool sFired = false
+if smi < 0
+    sFired := false
+sellSignal = ta.crossunder(smi, signalLine) and smi > 0 and conf >= minSell and not sFired
+if sellSignal
+    sFired := true
+
+plot(smi,        "SMI",        color=color.new(color.blue,   0), linewidth=2)
+plot(signalLine, "Sinyal",     color=color.new(color.orange, 0))
+plot(smiVwma,    "SMI VWMA(7)",color=color.new(color.purple, 0), style=plot.style_line)
+hline(0,  "0",   color=color.new(color.gray, 40))
+hline(40, "+40", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+hline(-40,"-40", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+
+plotshape(buySignal,  title="AL",  style=shape.triangleup,   location=location.bottom,
+   color=color.new(color.green, 0), size=size.tiny)
+plotshape(sellSignal, title="SAT", style=shape.triangledown, location=location.top,
+   color=color.new(color.red, 0),   size=size.tiny)

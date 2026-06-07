@@ -1,12 +1,11 @@
 """BIST TradingAgents — Streamlit arayüzü.
 
-Tek dosyalık, tek kullanıcılık bir analiz arayüzü. Bir BIST hissesi (örn.
-THYAO.IS) ve tarih girip çok-ajanlı analiz hattını (`TradingAgentsGraph.propagate`)
-çalıştırır; sonucu 5 kademeli rating + ajan raporları olarak gösterir.
+İki ekran:
+  🤖 AI Analizi      — çok-ajanlı LLM analizi (TradingAgentsGraph.propagate)
+  📐 Dip-Al Stratejisi — video.md teknik stratejisi (SMI+VWMA+Bollinger), LLM yok
 
 Çalıştırma:  streamlit run streamlit_app.py
-Anahtar:     .env içindeki OPENAI_API_KEY (tradingagents import'unda load_dotenv ile yüklenir)
-             ya da kenar çubuğundan girilir.
+Anahtar:     .env içindeki OPENAI_API_KEY (import'ta load_dotenv ile yüklenir)
 """
 
 from __future__ import annotations
@@ -14,16 +13,23 @@ from __future__ import annotations
 import os
 from datetime import date, timedelta
 
+import altair as alt
+import pandas as pd
 import streamlit as st
 
-# tradingagents import'u .env'i otomatik yükler (tradingagents/__init__.py)
+# tradingagents import'u .env'i yükler + bozuk SSL_CERT_FILE'ı onarır (__init__.py)
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.agents.utils.rating import parse_rating, RATINGS_5_TIER
+from tradingagents.strategy.dip_signal import (
+    analyze as strategy_analyze,
+    scan as strategy_scan,
+    INTERVALS,
+    BIST_POPULAR,
+)
 
 st.set_page_config(page_title="BIST TradingAgents", page_icon="📈", layout="wide")
 
-# 5 kademeli rating için renk/emoji eşlemesi (en boğa → en ayı)
 _RATING_STYLE = {
     "Buy":        ("#16a34a", "🟢", "Güçlü Al"),
     "Overweight": ("#65a30d", "🟢", "Ağırlık Artır"),
@@ -31,7 +37,11 @@ _RATING_STYLE = {
     "Underweight":("#ea580c", "🟠", "Ağırlık Azalt"),
     "Sell":       ("#dc2626", "🔴", "Sat"),
 }
-
+_STATUS_STYLE = {
+    "AL BÖLGESİ":  ("#16a34a", "🟢"),
+    "SAT UYARISI": ("#dc2626", "🔴"),
+    "NÖTR":        ("#6b7280", "⚪"),
+}
 _DEPTH = {"Sığ (hızlı)": 1, "Orta": 3, "Derin (kapsamlı)": 5}
 _QUICK_MODELS = ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1"]
 _DEEP_MODELS = ["gpt-5.4", "gpt-5.5", "gpt-5.2"]
@@ -41,26 +51,26 @@ _ANALYSTS = {
     "Haber (News)": "news",
     "Temel (Fundamentals)": "fundamentals",
 }
+_LANGUAGES = ["Turkish", "English"]
 
 
 def _last_weekday() -> date:
     d = date.today() - timedelta(days=1)
-    while d.weekday() >= 5:  # 5=Cmt, 6=Paz
+    while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
 
 
 def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
     parts = [f"# {ticker} — Analiz Raporu ({trade_date})\n"]
-    sections = [
+    for title, body in [
         ("Nihai Karar", state.get("final_trade_decision")),
         ("Temel (Fundamentals)", state.get("fundamentals_report")),
         ("Duygu / TR Haber & KAP (Sentiment)", state.get("sentiment_report")),
         ("Teknik (Market)", state.get("market_report")),
         ("Haber (News)", state.get("news_report")),
         ("Trader Planı", state.get("trader_investment_plan")),
-    ]
-    for title, body in sections:
+    ]:
         if body:
             parts.append(f"## {title}\n\n{body}\n")
     return "\n".join(parts)
@@ -69,59 +79,69 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
+    mode = st.radio("Ekran", ["🤖 AI Analizi", "📐 Dip-Al Stratejisi"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
-    if env_key:
-        st.success("OpenAI anahtarı .env'den yüklendi ✓")
+    if mode.startswith("🤖"):
+        if env_key:
+            st.success("OpenAI anahtarı .env'den yüklendi ✓")
+        else:
+            manual_key = st.text_input("OpenAI API Key", type="password",
+                                       help="sk-... — sadece bu oturumda kullanılır")
+            if manual_key:
+                os.environ["OPENAI_API_KEY"] = manual_key
+
+        language = st.selectbox("Rapor dili", _LANGUAGES, index=0)
+        deep_model = st.selectbox("Derin düşünme modeli", _DEEP_MODELS, index=0)
+        quick_model = st.selectbox("Hızlı model", _QUICK_MODELS, index=0)
+        depth_label = st.select_slider("Araştırma derinliği", list(_DEPTH.keys()),
+                                       value="Sığ (hızlı)")
+        analyst_labels = st.multiselect("Analistler", list(_ANALYSTS.keys()),
+                                        default=list(_ANALYSTS.keys()))
+        st.caption("💡 Her analiz OpenAI kredisi harcar. Derinlik arttıkça maliyet/süre artar.")
     else:
-        manual_key = st.text_input("OpenAI API Key", type="password",
-                                   help="sk-... — sadece bu oturumda kullanılır")
-        if manual_key:
-            os.environ["OPENAI_API_KEY"] = manual_key
-
-    deep_model = st.selectbox("Derin düşünme modeli", _DEEP_MODELS, index=0,
-                              help="Araştırma/karar ajanları. Maliyet/kalite dengesi.")
-    quick_model = st.selectbox("Hızlı model", _QUICK_MODELS, index=0)
-    depth_label = st.select_slider("Araştırma derinliği", list(_DEPTH.keys()),
-                                   value="Sığ (hızlı)")
-    analyst_labels = st.multiselect("Analistler", list(_ANALYSTS.keys()),
-                                    default=list(_ANALYSTS.keys()))
-    st.caption("💡 Her analiz OpenAI kredisi harcar. Derinlik arttıkça maliyet/süre artar.")
+        st.caption("📐 Dip-Al stratejisi tamamen yereldir (LLM yok, ücretsiz, anlıktır).")
 
 
-# ── Ana panel ───────────────────────────────────────────────────────────────
-st.title("📈 BIST TradingAgents")
-st.caption("Borsa İstanbul hisseleri için çok-ajanlı yapay zeka analizi · "
-           "Yatırım tavsiyesi değildir.")
+# ════════════════════════════════════════════════════════════════════════════
+# 🤖 AI ANALİZİ EKRANI
+# ════════════════════════════════════════════════════════════════════════════
+def render_ai_screen():
+    st.title("📈 BIST TradingAgents — AI Analizi")
+    st.caption("Borsa İstanbul hisseleri için çok-ajanlı yapay zeka analizi · "
+               "Yatırım tavsiyesi değildir.")
 
-c1, c2, c3 = st.columns([2, 1, 1])
-with c1:
-    ticker = st.text_input("Hisse (ticker)", value="THYAO.IS",
-                           help="BIST için .IS ekle: THYAO.IS, GARAN.IS, ASELS.IS").strip().upper()
-with c2:
-    trade_date = st.date_input("Analiz tarihi", value=_last_weekday())
-with c3:
-    st.write("")
-    st.write("")
-    run = st.button("🚀 Analiz Et", type="primary", use_container_width=True)
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        ticker = st.text_input("Hisse (ticker)", value="THYAO.IS",
+                               help="BIST için .IS ekle: THYAO.IS, GARAN.IS").strip().upper()
+    with c2:
+        trade_date = st.date_input("Analiz tarihi", value=_last_weekday())
+    with c3:
+        st.write(""); st.write("")
+        run = st.button("🚀 Analiz Et", type="primary", use_container_width=True)
 
-if run:
+    if not run:
+        st.info("Soldan ayarları seç, bir hisse kodu (örn. **THYAO.IS**) ve tarih gir, "
+                "**Analiz Et**'e bas. İlk çalıştırma birkaç dakika sürebilir.")
+        return
+
     if not os.environ.get("OPENAI_API_KEY"):
         st.error("OpenAI API anahtarı yok. Kenar çubuğundan gir ya da .env'e ekle.")
-        st.stop()
+        return
     if not ticker:
         st.error("Bir hisse kodu gir (örn. THYAO.IS).")
-        st.stop()
+        return
 
-    selected = [_ANALYSTS[l] for l in analyst_labels] or ["market", "social", "news", "fundamentals"]
-    rounds = _DEPTH[depth_label]
+    selected = [_ANALYSTS[l] for l in analyst_labels] or list(_ANALYSTS.values())
     config = {
         **DEFAULT_CONFIG,
         "llm_provider": "openai",
         "deep_think_llm": deep_model,
         "quick_think_llm": quick_model,
-        "max_debate_rounds": rounds,
-        "max_risk_discuss_rounds": rounds,
+        "max_debate_rounds": _DEPTH[depth_label],
+        "max_risk_discuss_rounds": _DEPTH[depth_label],
+        "output_language": language,
     }
     asset_type = "crypto" if ticker.endswith(("-USD", "-USDT", "-USDC")) else "stock"
     date_str = trade_date.strftime("%Y-%m-%d")
@@ -132,22 +152,20 @@ if run:
             st.write("Graph kuruluyor, modeller başlatılıyor…")
             ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
             benchmark = ta._resolve_benchmark(ticker)
-            st.write(f"Benchmark (alpha için): **{benchmark}**")
+            st.write(f"Benchmark (alpha için): **{benchmark}** · Rapor dili: **{language}**")
             st.write("Ajanlar çalışıyor: Teknik → Duygu/TR-Haber → Haber → Temel → "
-                     "Araştırma tartışması → Trader → Risk → Karar…")
-            final_state, decision = ta.propagate(ticker, date_str, asset_type=asset_type)
+                     "Araştırma → Trader → Risk → Karar…")
+            final_state, _ = ta.propagate(ticker, date_str, asset_type=asset_type)
             status.update(label=f"{ticker} analizi tamamlandı ✓", state="complete", expanded=False)
     except Exception as e:  # noqa: BLE001
         import traceback as _tb
         st.error(f"Analiz sırasında hata: {type(e).__name__}: {e}")
         with st.expander("Teknik ayrıntı (traceback)"):
             st.code(_tb.format_exc())
-        st.stop()
+        return
 
-    # ── Sonuçlar ────────────────────────────────────────────────────────────
     rating = parse_rating(final_state.get("final_trade_decision", ""))
     color, emoji, tr = _RATING_STYLE.get(rating, ("#6b7280", "⚪", rating))
-
     st.markdown(
         f"<div style='padding:16px 20px;border-radius:12px;background:{color}1a;"
         f"border:2px solid {color};'>"
@@ -156,21 +174,17 @@ if run:
         f"<span style='font-size:18px;font-weight:600;'>({tr})</span></span></div>",
         unsafe_allow_html=True,
     )
-    st.caption(f"Alpha benchmark'ı: {benchmark} · Fiyatlar TRY · Karar metni 5 kademeli "
-               f"ölçek ({', '.join(RATINGS_5_TIER)}) kullanır.")
+    st.caption(f"Alpha benchmark'ı: {benchmark} · Fiyatlar TRY · 5 kademe: {', '.join(RATINGS_5_TIER)}")
 
-    st.download_button(
-        "📥 Tüm raporu indir (.md)",
-        _build_report_markdown(final_state, ticker, date_str),
-        file_name=f"{ticker}_{date_str}_analiz.md",
-        mime="text/markdown",
-    )
+    st.download_button("📥 Tüm raporu indir (.md)",
+                       _build_report_markdown(final_state, ticker, date_str),
+                       file_name=f"{ticker}_{date_str}_analiz.md", mime="text/markdown")
 
     st.subheader("Karar gerekçesi")
     st.markdown(final_state.get("final_trade_decision") or "_(boş)_")
 
     tabs = st.tabs(["💬 Duygu / TR-Haber & KAP", "📊 Temel", "📈 Teknik",
-                    "📰 Haber", "🧠 Araştırma tartışması", "💼 Trader planı"])
+                    "📰 Haber", "🧠 Araştırma", "💼 Trader planı"])
     with tabs[0]:
         st.markdown(final_state.get("sentiment_report") or "_(seçili değil)_")
     with tabs[1]:
@@ -181,19 +195,142 @@ if run:
         st.markdown(final_state.get("news_report") or "_(seçili değil)_")
     with tabs[4]:
         deb = final_state.get("investment_debate_state", {}) or {}
-        if deb.get("bull_history"):
-            st.markdown("#### 🐂 Boğa")
-            st.markdown(deb["bull_history"])
-        if deb.get("bear_history"):
-            st.markdown("#### 🐻 Ayı")
-            st.markdown(deb["bear_history"])
-        if deb.get("judge_decision"):
-            st.markdown("#### ⚖️ Araştırma Yöneticisi")
-            st.markdown(deb["judge_decision"])
+        for head, key in [("🐂 Boğa", "bull_history"), ("🐻 Ayı", "bear_history"),
+                          ("⚖️ Araştırma Yöneticisi", "judge_decision")]:
+            if deb.get(key):
+                st.markdown(f"#### {head}")
+                st.markdown(deb[key])
         if not deb:
             st.markdown("_(yok)_")
     with tabs[5]:
         st.markdown(final_state.get("trader_investment_plan") or "_(yok)_")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 📐 DİP-AL STRATEJİSİ EKRANI  (video.md: SMI + VWMA + Bollinger)
+# ════════════════════════════════════════════════════════════════════════════
+def _strategy_charts(df: pd.DataFrame):
+    d = df.tail(180).copy()
+    d["date"] = d.index
+    base = alt.Chart(d).encode(x=alt.X("date:T", title=None))
+    price = base.mark_line(color="#3b82f6").encode(
+        y=alt.Y("Close:Q", title="Fiyat (TRY)", scale=alt.Scale(zero=False)))
+    bbmid = base.mark_line(color="#9ca3af", strokeDash=[4, 3]).encode(y="bb_mid:Q")
+    bbup = base.mark_line(color="#e5e7eb", strokeDash=[2, 3]).encode(y="bb_upper:Q")
+    buys = alt.Chart(d[d["buy"]]).mark_point(
+        color="#16a34a", size=120, shape="triangle-up", filled=True).encode(x="date:T", y="Close:Q")
+    sells = alt.Chart(d[d["sell"]]).mark_point(
+        color="#dc2626", size=120, shape="triangle-down", filled=True).encode(x="date:T", y="Close:Q")
+    price_chart = (bbup + bbmid + price + buys + sells).properties(height=320)
+
+    sb = alt.Chart(d).encode(x=alt.X("date:T", title=None))
+    smi_line = sb.mark_line(color="#3b82f6").encode(y=alt.Y("smi:Q", title="SMI"))
+    sig_line = sb.mark_line(color="#f59e0b").encode(y="smi_signal:Q")
+    vwma_line = sb.mark_line(color="#8b5cf6", strokeDash=[3, 2]).encode(y="smi_vwma:Q")
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#9ca3af").encode(y="y:Q")
+    smi_chart = (zero + smi_line + sig_line + vwma_line).properties(height=180)
+    return price_chart, smi_chart
+
+
+def render_strategy_screen():
+    st.title("📐 Dip-Al / Tepeden-Sat Stratejisi")
+    st.caption("SMI(10,3,3) + SMI üzerine VWMA(7) + Bollinger orta bandı · "
+               "Deterministik teknik sinyal (LLM yok) · Yatırım tavsiyesi değildir.")
+
+    c1, c2, c3 = st.columns([2, 1.2, 1])
+    with c1:
+        ticker = st.text_input("Hisse (ticker)", value="THYAO.IS",
+                               help="THYAO.IS, GARAN.IS, ASELS.IS …").strip().upper()
+    with c2:
+        interval = st.selectbox("Zaman dilimi", list(INTERVALS.keys()), index=0,
+                                help="Günlük ve 4 saatlik en kaliteli (video).")
+    with c3:
+        st.write(""); st.write("")
+        scan = st.button("🔍 Tara", type="primary", use_container_width=True)
+
+    if not scan:
+        st.info("Bir hisse + zaman dilimi seç, **Tara**'ya bas. "
+                "Mavi=SMI, turuncu=sinyal, mor=VWMA(7); 🟢 yukarı üçgen = AL, 🔴 aşağı üçgen = SAT.")
+        return
+
+    res = strategy_analyze(ticker, interval)
+    if not res.ok:
+        st.error(res.error or "Analiz başarısız.")
+        return
+
+    color, emoji = _STATUS_STYLE.get(res.status, ("#6b7280", "⚪"))
+    last = res.df.iloc[-1]
+    close_txt = f"{last['Close']:.2f}" if pd.notna(last["Close"]) else "—"
+    smi_txt = f"{last['smi']:.1f}" if pd.notna(last["smi"]) else "—"
+    st.markdown(
+        f"<div style='padding:14px 18px;border-radius:12px;background:{color}1a;"
+        f"border:2px solid {color};'>"
+        f"<span style='font-size:13px;color:{color};font-weight:600;'>GÜNCEL DURUM · {ticker} · {interval}</span><br>"
+        f"<span style='font-size:26px;font-weight:800;color:{color};'>{emoji} {res.status}</span> "
+        f"<span style='color:#6b7280;'>· kapanış {close_txt} TRY · SMI {smi_txt}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("##### AL kriterleri (güncel)")
+    cols = st.columns(len(res.conditions))
+    for col, (label, ok) in zip(cols, res.conditions.items()):
+        col.metric(label, "✓" if ok else "✗", delta=("sağlandı" if ok else "yok"),
+                   delta_color=("normal" if ok else "off"))
+
+    price_chart, smi_chart = _strategy_charts(res.df)
+    st.altair_chart(price_chart, use_container_width=True)
+    st.altair_chart(smi_chart, use_container_width=True)
+
+    st.markdown("##### Son sinyaller")
+    if res.signals:
+        df_sig = pd.DataFrame(res.signals)[["date", "type", "price"]]
+        df_sig.columns = ["Tarih", "Sinyal", "Fiyat (TRY)"]
+        st.dataframe(df_sig.iloc[::-1], use_container_width=True, hide_index=True)
+    else:
+        st.caption("Bu pencerede sinyal bulunamadı.")
+
+    st.caption("⚠️ Video notu: AL kombinasyonu fake sinyalleri iyi eler; SAT tarafı "
+               "daha az hassastır — kademeli kâr realizasyonu önerilir.")
+
+
+_STATUS_EMOJI = {"AL BÖLGESİ": "🟢 AL", "SAT UYARISI": "🔴 SAT", "NÖTR": "⚪ Nötr", "—": "⚠️ veri yok"}
+
+
+def render_scanner():
+    st.divider()
+    st.subheader("🔎 BIST Tarayıcı — şu an AL bölgesindeki hisseler")
+    sc1, sc2 = st.columns([1.2, 1])
+    with sc1:
+        interval = st.selectbox("Zaman dilimi (tarama)", list(INTERVALS.keys()), index=0,
+                                key="scan_interval")
+    with sc2:
+        st.write(""); st.write("")
+        do_scan = st.button(f"📡 {len(BIST_POPULAR)} BIST hissesini tara",
+                            use_container_width=True)
+    if not do_scan:
+        st.caption("Likit BIST evrenini (BIST 30 + popüler) tarar, AL bölgesindekileri en üste sıralar. "
+                   "Birkaç saniye sürer (paralel çeker).")
+        return
+
+    with st.spinner(f"{len(BIST_POPULAR)} hisse taranıyor…"):
+        rows = strategy_scan(BIST_POPULAR, interval)
+
+    al = [r for r in rows if r["status"] == "AL BÖLGESİ"]
+    st.success(f"**{len(al)}** hisse şu an AL bölgesinde" + (": " + ", ".join(r["ticker"].replace(".IS","") for r in al) if al else "."))
+
+    df = pd.DataFrame(rows)
+    df["Durum"] = df["status"].map(lambda s: _STATUS_EMOJI.get(s, s))
+    df["Kriter"] = df["met"].map(lambda m: f"{m}/3")
+    view = df[["ticker", "Durum", "Kriter", "close", "smi"]].copy()
+    view.columns = ["Hisse", "Durum", "AL kriteri", "Fiyat (TRY)", "SMI"]
+    view["Hisse"] = view["Hisse"].str.replace(".IS", "", regex=False)
+    st.dataframe(view, use_container_width=True, hide_index=True)
+    st.caption("⚠️ Yatırım tavsiyesi değildir. Sinyaller geçmiş veriyle hesaplanır; doğrulamadan işlem açma.")
+
+
+# ── Yönlendirme ─────────────────────────────────────────────────────────────
+if mode.startswith("🤖"):
+    render_ai_screen()
 else:
-    st.info("Soldan ayarları seç, bir hisse kodu (örn. **THYAO.IS**) ve tarih gir, "
-            "**Analiz Et**'e bas. İlk çalıştırma birkaç dakika sürebilir.")
+    render_strategy_screen()
+    render_scanner()

@@ -1,0 +1,110 @@
+//@version=5
+// ============================================================================
+// Dip-Al / Tepeden-Sat PRO  (SMI + SMI-VWMA + Bollinger)  — güçlü/teyitli sürüm
+// video.md stratejisi: "az ama kaliteli, fake sinyalleri ele".
+//
+// AL, SMI sadece VWMA'ya değdiğinde DEĞİL; şu teyitlerin HEPSİ varken oluşur:
+//   • 0-altı boğa kesişiminden sonra belirli pencere içinde (dip bağlamı)
+//   • SMI, VWMA'yı belirgin FARKLA geçer (minGap) ve SMI yükseliyor
+//   • SMI aşırı yüksek değil (tepeyi kovalama)
+//   • kapanış Bollinger orta bandı üzerinde (onay)
+//   • her dip döngüsünde yalnızca 1 AL (tekrar yok)
+// SAT: bearish kesişim + {fiyat skoru>50, BB üst zorlanması, hacim düşüşü}'nden ≥2.
+//
+// Kullanım: Pine Editor'a yapıştır > Add to chart. Açtığın HER hissede çalışır
+// (sembolü değiştir, yeniden hesaplar). Günlük/4s önerilir. Tavsiye değildir.
+// ============================================================================
+indicator("Dip-Al / Tepeden-Sat PRO (SMI+VWMA+BB)", overlay=true)
+
+// ── SMI parametreleri ─────────────────────────────────────────────────────────
+kLen    = input.int(10,  "SMI %K Uzunluk", group="SMI")
+dLen    = input.int(3,   "SMI %D Yumuşatma", group="SMI")
+sigLen  = input.int(3,   "Sinyal EMA", group="SMI")
+vwmaLen = input.int(7,   "SMI VWMA (HAHO)", group="SMI")
+bbLen   = input.int(20,  "Bollinger Uzunluk", group="Bollinger")
+bbMult  = input.float(2.0, "Bollinger StdDev", group="Bollinger")
+
+// ── Sinyal sağlamlık ayarları (kalite/sıklık dengesi) ────────────────────────
+armBars  = input.int(8,    "Dip penceresi (bar)", group="AL kalite",
+   tooltip="0-altı boğa kesişiminden sonra kaç bar içinde VWMA kırılımı AL sayılsın")
+minGap   = input.float(2.0,"Min SMI-VWMA farkı", group="AL kalite",
+   tooltip="SMI, VWMA'yı en az bu kadar farkla geçmeli (azıcık dokunma fake'lerini eler)")
+entryCeil= input.float(40.0,"AL üst SMI sınırı", group="AL kalite",
+   tooltip="SMI bu değerin üstündeyse AL verme (tepeyi kovalama; dipten al)")
+needRising = input.bool(true, "SMI yükseliyor şartı", group="AL kalite")
+
+scoreLen = input.int(14,   "Fiyat skoru uzunluğu", group="SAT kalite")
+minSell  = input.int(2,    "Min SAT teyidi (0-3)", group="SAT kalite",
+   tooltip="Bearish kesişime ek olarak kaç teyit aransın: fiyat skoru>50, BB üst, hacim düşüşü")
+
+useTrend = input.bool(false, "Trend filtresi (fiyat EMA üstünde)", group="Filtre")
+trendLen = input.int(200,  "Trend EMA uzunluğu", group="Filtre")
+
+// ── SMI (Stochastic Momentum Index) ──────────────────────────────────────────
+hh         = ta.highest(high, kLen)
+ll         = ta.lowest(low,  kLen)
+rel        = close - (hh + ll) / 2.0
+rng        = hh - ll
+smoothRel  = ta.ema(ta.ema(rel, dLen), dLen)
+smoothRng  = ta.ema(ta.ema(rng, dLen), dLen)
+smi        = smoothRng != 0 ? 100.0 * smoothRel / (smoothRng / 2.0) : 0.0
+signalLine = ta.ema(smi, sigLen)
+smiVwma    = ta.vwma(smi, vwmaLen)
+
+// ── Bollinger ────────────────────────────────────────────────────────────────
+basis = ta.sma(close, bbLen)
+dev   = bbMult * ta.stdev(close, bbLen)
+upper = basis + dev
+lower = basis - dev
+
+// ── Filtreler ────────────────────────────────────────────────────────────────
+trendOk    = not useTrend or close > ta.ema(close, trendLen)
+priceScore = ta.stoch(close, high, low, scoreLen)   // video: "fiyat skoru" (0-100)
+
+// ── AL — durum makinesi (dip döngüsünde tek, teyitli sinyal) ─────────────────
+newDip = ta.crossover(smi, signalLine) and smi < 0   // dipte boğa kesişimi
+var bool buyFired = false
+if newDip
+    buyFired := false                                 // yeni dip → yeni hak
+
+dipBars  = ta.barssince(newDip)
+inWindow = not na(dipBars) and dipBars <= armBars
+vwmaBreak= ta.crossover(smi, smiVwma)
+gapOk    = (smi - smiVwma) >= minGap
+rising   = not needRising or smi > smi[1]
+notHigh  = smi < entryCeil
+priceOk  = close > basis
+
+buySignal = inWindow and not buyFired and vwmaBreak and gapOk and rising and notHigh and priceOk and trendOk
+if buySignal
+    buyFired := true                                  // bu döngüde tekrar verme
+
+// ── SAT — durum makinesi (yükseliş döngüsünde tek, ≥minSell teyit) ───────────
+bearCross  = ta.crossunder(smi, signalLine)
+nearUpper  = close >= upper * 0.99
+volFalling = volume < ta.sma(volume, 5)
+scoreHigh  = priceScore > 50
+confCount  = (nearUpper ? 1 : 0) + (volFalling ? 1 : 0) + (scoreHigh ? 1 : 0)
+
+var bool sellFired = false
+if smi < 0
+    sellFired := false                                // SMI dibe dönünce sıfırla
+
+sellSignal = bearCross and smi > 0 and confCount >= minSell and not sellFired
+if sellSignal
+    sellFired := true
+
+// ── Çizimler ─────────────────────────────────────────────────────────────────
+plot(basis, "BB Orta", color=color.new(color.gray, 0), linewidth=2)
+plot(upper, "BB Üst",  color=color.new(color.gray, 70))
+plot(lower, "BB Alt",  color=color.new(color.gray, 70))
+
+plotshape(buySignal,  title="AL",  style=shape.labelup,   location=location.belowbar,
+   color=color.new(color.green, 0), textcolor=color.white, text="AL",  size=size.small)
+plotshape(sellSignal, title="SAT", style=shape.labeldown, location=location.abovebar,
+   color=color.new(color.red, 0),   textcolor=color.white, text="SAT", size=size.small)
+bgcolor(buySignal ? color.new(color.green, 80) : sellSignal ? color.new(color.red, 80) : na)
+
+// ── Alarmlar ─────────────────────────────────────────────────────────────────
+alertcondition(buySignal,  "AL sinyali",  "Dip-Al PRO: {{ticker}} AL ({{interval}})")
+alertcondition(sellSignal, "SAT sinyali", "Dip-Al PRO: {{ticker}} SAT ({{interval}})")
