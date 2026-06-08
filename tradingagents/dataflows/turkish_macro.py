@@ -27,18 +27,16 @@ from __future__ import annotations
 import time
 from typing import Iterable, Optional
 
-# Reuse the battle-tested RSS plumbing from the sibling module so both fetchers
-# parse feeds identically and tests can patch one well-known seam.
-from tradingagents.dataflows.turkish_news import _fetch_feed, _strip_html  # noqa: F401
-
-# Macro-leaning Turkish RSS feeds (label, url), ordered by macro signal density.
-# Unknown/!200 endpoints fail open (return []), so including a couple of
-# economy-desk guesses alongside known-good feeds only ever adds recall.
-DEFAULT_MACRO_FEEDS: tuple[tuple[str, str], ...] = (
-    ("Investing.com TR — Ekonomi", "https://tr.investing.com/rss/news_14.rss"),
-    ("Investing.com TR — Merkez Bankaları", "https://tr.investing.com/rss/news_95.rss"),
-    ("Investing.com TR — Finans", "https://tr.investing.com/rss/news.rss"),
-    ("BloombergHT", "https://www.bloomberght.com/rss"),
+# Reuse the battle-tested RSS plumbing AND the vetted feed list from the sibling
+# module so both fetchers parse identical, already-working sources (the
+# sentiment analyst ships against these). We deliberately do NOT invent extra
+# economy-desk feed IDs here — unverified URLs would just fail open and look
+# like "no macro news". To check/extend live coverage, run
+# ``scripts/check_macro_feeds.py`` where outbound network is allowed.
+from tradingagents.dataflows.turkish_news import (  # noqa: F401
+    DEFAULT_FEEDS as DEFAULT_MACRO_FEEDS,
+    _fetch_feed,
+    _strip_html,
 )
 
 # Theme buckets in priority order. The first bucket whose keyword set hits the
