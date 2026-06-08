@@ -188,6 +188,13 @@ def render_ai_screen():
                        _build_report_markdown(final_state, ticker, date_str),
                        file_name=f"{ticker}_{date_str}_analiz.md", mime="text/markdown")
 
+    # Fail-loud: if the macro analyst ran on missing data, surface it up top so
+    # the decision is never silently read as resting on a full macro picture.
+    macro_health = final_state.get("macro_data_health") or ""
+    if "VERİ UYARISI" in (final_state.get("macro_report") or ""):
+        st.warning("⚠️ Makro veri kaynaklarına ulaşılamadı — makro değerlendirmesi "
+                   "eksik veriyle üretildi. 🏛️ Makro-TR sekmesindeki **Veri Sağlığı**'na bak.")
+
     st.subheader("Karar gerekçesi")
     st.markdown(final_state.get("final_trade_decision") or "_(boş)_")
 
@@ -204,6 +211,12 @@ def render_ai_screen():
     with tabs[4]:
         st.caption("TCMB/faiz · enflasyon · kur · ülke riski → BIST geneli rejim ve sektör etkisi. "
                    "Yalnızca BIST (.IS) hisseleri için otomatik üretilir.")
+        if macro_health:
+            healthy = "✗" not in macro_health and "⚠️" not in macro_health
+            with st.expander("🩺 Veri Sağlığı — kaynak durumları",
+                             expanded=not healthy):
+                st.caption("✓ canlı veri · ⚠️ boş/fallback · ✗ erişilemedi")
+                st.code(macro_health, language=None)
         st.markdown(final_state.get("macro_report") or "_(BIST dışı — makro analizi üretilmedi)_")
     with tabs[5]:
         deb = final_state.get("investment_debate_state", {}) or {}

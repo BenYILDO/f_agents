@@ -16,6 +16,8 @@ them into the prompt. BIST-only: for non-.IS tickers it emits a short note
 instead of a report, since global macro is already covered by the News analyst.
 """
 
+from typing import Optional
+
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -25,10 +27,13 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.dataflows.symbol_utils import is_bist_ticker
 from tradingagents.dataflows.turkish_macro import fetch_turkish_macro_news
-from tradingagents.dataflows.tcmb_calendar import get_ppk_decisions
+from tradingagents.dataflows.tcmb_calendar import resolve_ppk, get_macro_official_numbers
 from tradingagents.dataflows.macro_event_study import (
     compute_event_study,
     format_event_study,
+)
+from tradingagents.dataflows.data_health import (
+    SourceHealth, OK, EMPTY, ERROR, any_ok, render_health,
 )
 
 # Rate-direction cues used to (a) condition the historical event study on the
@@ -58,17 +63,32 @@ def _detect_rate_direction(macro_text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _build_event_study_block(ticker: str, macro_block: str) -> str:
-    """Build the 'how did this ticker behave after similar past events' block."""
-    direction, label = _detect_rate_direction(macro_block)
+def _build_event_study(
+    ticker: str, macro_text: str,
+) -> tuple[str, SourceHealth, Optional[SourceHealth]]:
+    """Return (event-study text, price-data health, PPK-source health).
+
+    When no rate event is detected the study is skipped (both healths report
+    ``empty`` with a reason rather than masquerading as data).
+    """
+    direction, label = _detect_rate_direction(macro_text)
     if label is None:
-        return ("<Güncel başlıklarda olay-etüdünü tetikleyecek bir TCMB faiz "
-                "kararı/sinyali yok; geçmiş benzer-olay analizi atlandı.>")
-    decisions = get_ppk_decisions(direction=direction)
+        return (
+            "<Güncel başlıklarda olay-etüdünü tetikleyecek bir TCMB faiz "
+            "kararı/sinyali yok; geçmiş benzer-olay analizi atlandı.>",
+            SourceHealth("Olay-etüdü (fiyat geçmişi)", EMPTY, "tetikleyici faiz sinyali yok"),
+            None,
+        )
+    decisions, ppk_health = resolve_ppk(direction=direction)
     result = compute_event_study(
         ticker, [d["date"] for d in decisions], direction_label=label,
     )
-    return format_event_study(result)
+    if result.ok:
+        ev_health = SourceHealth("Olay-etüdü (fiyat geçmişi)", OK,
+                                 f"{result.n_events} olay", result.n_events)
+    else:
+        ev_health = SourceHealth("Olay-etüdü (fiyat geçmişi)", ERROR, result.reason)
+    return format_event_study(result), ev_health, ppk_health
 
 # Emitted for non-BIST instruments so the node is a graceful no-op there
 # (global macro is the News analyst's job via get_global_news).
@@ -94,11 +114,33 @@ def create_macro_analyst(llm):
 
         if not is_bist_ticker(ticker):
             return {"messages": [AIMessage(content=_NON_BIST_NOTE)],
-                    "macro_report": _NON_BIST_NOTE}
+                    "macro_report": _NON_BIST_NOTE, "macro_data_health": ""}
 
-        macro_block = fetch_turkish_macro_news()
-        event_block = _build_event_study_block(ticker, macro_block)
-        system_message = _build_system_message(current_date, macro_block, event_block)
+        # Pre-fetch every source with health. Official EVDS numbers are the
+        # backbone; news adds color; the event study is the ticker base rate.
+        news = fetch_turkish_macro_news()
+        official_text, official_health = get_macro_official_numbers()
+        event_text, event_health, ppk_health = _build_event_study(ticker, news.text)
+
+        health = [*news.sources, *official_health, event_health]
+        if ppk_health is not None:
+            health.append(ppk_health)
+        health_text = render_health(health)
+
+        # Fail loud: if neither the news feeds NOR the official EVDS numbers
+        # returned real data, the macro read rests on nothing — flag it at the
+        # top of the report (per the desk's "warn and continue" policy) instead
+        # of letting a placeholder pass as analysis.
+        core_ok = news.ok or any_ok(official_health)
+        warning = "" if core_ok else (
+            "> ⚠️ **VERİ UYARISI:** Makro veri kaynaklarına (Türkçe haber RSS + "
+            "TCMB EVDS resmi serileri) ulaşılamadı. Aşağıdaki değerlendirme "
+            "sınırlı/eksik veriyle üretilmiştir — düşük güvenle ele alın.\n\n"
+        )
+
+        system_message = _build_system_message(
+            current_date, official_text, news.text, event_text, health_text,
+        )
 
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -120,24 +162,45 @@ def create_macro_analyst(llm):
         # invoke yields the report (the conditional edge then routes to clear).
         formatted_messages = prompt.format_messages(messages=state["messages"])
         result = llm.invoke(formatted_messages)
-        report = result.content if isinstance(result.content, str) else str(result.content)
+        body = result.content if isinstance(result.content, str) else str(result.content)
+        report = warning + body
 
-        return {"messages": [AIMessage(content=report)], "macro_report": report}
+        return {"messages": [AIMessage(content=report)], "macro_report": report,
+                "macro_data_health": health_text}
 
     return macro_analyst_node
 
 
-def _build_system_message(current_date: str, macro_block: str, event_block: str) -> str:
-    """Assemble the macro-analyst system message with macro + event-study blocks."""
+def _build_system_message(
+    current_date: str, official_block: str, macro_block: str,
+    event_block: str, health_block: str,
+) -> str:
+    """Assemble the macro-analyst system message from all pre-fetched blocks."""
     return f"""You are the Türkiye Macro Analyst on a Borsa İstanbul (BIST) trading desk. Your job is NOT to analyze one company — it is to read the domestic macro regime as of {current_date} and translate it into a *market-wide and sector* signal that the rest of the desk weighs alongside the company-specific reports.
+
+## Official TCMB data (EVDS) — the backbone, use first
+
+Authoritative, numeric. When present, anchor your read on these hard numbers (latest policy rate, USD/TRY, CPI) rather than on news framing.
+
+<start_of_official_data>
+{official_block}
+<end_of_official_data>
 
 ## Macro headlines (pre-fetched, Turkish-language, theme-bucketed)
 
-These are the freshest Turkish macro headlines, grouped by theme (faiz/para politikası, enflasyon, kur, büyüme, bütçe/ülke riski, jeopolitik).
+These add color and timeliness on top of the official numbers, grouped by theme (faiz/para politikası, enflasyon, kur, büyüme, bütçe/ülke riski, jeopolitik).
 
 <start_of_macro_news>
 {macro_block}
 <end_of_macro_news>
+
+## Data health — be honest about what was actually available
+
+This is the live status of each source. Any line that is not "✓" means that input is missing/degraded; lower your confidence accordingly and say so explicitly. NEVER present a regime read as solid when the sources behind it were empty.
+
+<start_of_data_health>
+{health_block}
+<end_of_data_health>
 
 ## Historical event study — how THIS ticker reacted to similar past events
 

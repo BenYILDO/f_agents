@@ -60,6 +60,9 @@ class AgentState(MessagesState):
     macro_report: Annotated[
         str, "Report from the Türkiye Macro Analyst (BIST-wide regime; .IS tickers only)"
     ]
+    macro_data_health: Annotated[
+        str, "Per-source health summary for the macro analyst's data (RSS/EVDS/price)"
+    ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
 
     # researcher team discussion step

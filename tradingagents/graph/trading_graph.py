@@ -428,6 +428,7 @@ class TradingAgentsGraph:
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
             "macro_report": final_state.get("macro_report", ""),
+            "macro_data_health": final_state.get("macro_data_health", ""),
             "fundamentals_report": final_state["fundamentals_report"],
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],

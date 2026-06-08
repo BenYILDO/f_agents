@@ -34,9 +34,18 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-# A descriptive, identified User-Agent. The feeds below serve this token; we
-# do not spoof a browser because none of these endpoints require it.
-_UA = "tradingagents/0.2 (+https://github.com/TauricResearch/TradingAgents)"
+# Browser-like User-Agent. Several Turkish finance hosts (Investing.com behind
+# Cloudflare in particular) reject non-browser tokens with 403, so we present a
+# realistic desktop UA to maximize reachability from datacenter IPs. Reliability
+# matters more here than self-identification — when a feed still fails it is
+# reported as unhealthy rather than silently empty (see fetch_turkish_macro_news).
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+# Transient-failure retry budget for feed fetches (attempts, base backoff secs).
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF = 0.6
 
 # (label, url) ordered by signal density for BIST-specific discussion. The
 # borsa feed is the most on-topic; BloombergHT is broad macro context.
@@ -95,13 +104,37 @@ def _build_keywords(ticker: str, company_name: Optional[str]) -> list[str]:
 
 
 def _fetch_feed(label: str, url: str, limit: int, timeout: float) -> list[dict]:
-    """Fetch and parse one RSS 2.0 feed. Returns [] on any failure."""
+    """Fetch and parse one RSS 2.0 feed, retrying transient failures. [] on failure.
+
+    Retries up to ``_FETCH_ATTEMPTS`` times with exponential backoff to ride out
+    transient network/host hiccups; a parse error is not retried (the body is
+    not valid RSS). A persistent failure returns [] and the caller marks the
+    source unhealthy rather than confusing it with a genuinely empty feed.
+    """
     req = Request(url, headers={"User-Agent": _UA, "Accept": "application/xml, text/xml, */*"})
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            root = ET.fromstring(resp.read())
-    except (HTTPError, URLError, TimeoutError, ET.ParseError) as exc:
-        logger.warning("Turkish news fetch failed for %s (%s): %s", label, url, exc)
+    root = None
+    for attempt in range(_FETCH_ATTEMPTS):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                root = ET.fromstring(resp.read())
+            break
+        except ET.ParseError as exc:
+            logger.warning("Turkish news parse failed for %s (%s): %s", label, url, exc)
+            return []
+        except HTTPError as exc:
+            # Only transient server-side codes are worth retrying; a 403/404
+            # (e.g. Cloudflare block) is permanent, so fail fast instead of
+            # wasting backoff cycles on it.
+            if exc.code not in (429, 500, 502, 503, 504) or attempt + 1 >= _FETCH_ATTEMPTS:
+                logger.warning("Turkish news fetch failed for %s (%s): %s", label, url, exc)
+                return []
+            time.sleep(_FETCH_BACKOFF * (2 ** attempt))
+        except (URLError, TimeoutError) as exc:
+            if attempt + 1 >= _FETCH_ATTEMPTS:
+                logger.warning("Turkish news fetch failed for %s (%s): %s", label, url, exc)
+                return []
+            time.sleep(_FETCH_BACKOFF * (2 ** attempt))
+    if root is None:
         return []
 
     items = []

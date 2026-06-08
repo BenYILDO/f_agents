@@ -74,3 +74,39 @@ class TestEvdsMerge:
         with patch.object(cal, "_fetch_evds_observations", return_value=[]):
             out = cal.get_ppk_decisions(direction="hike", api_key="KEY")
         assert out and all(d["direction"] == "hike" for d in out)
+
+
+@pytest.mark.unit
+class TestResolvePpkHealth:
+    def test_no_key_health_is_empty_seed(self, monkeypatch):
+        monkeypatch.delenv("EVDS_API_KEY", raising=False)
+        decisions, health = cal.resolve_ppk(direction="cut", api_key=None)
+        assert decisions and health.status == "empty" and "seed" in health.detail.lower()
+
+    def test_live_evds_health_is_ok(self):
+        obs = [(date(2024, 3, 21), 50.0), (date(2024, 12, 26), 47.5)]
+        with patch.object(cal, "_fetch_evds_observations", return_value=obs):
+            _, health = cal.resolve_ppk(direction="cut", api_key="KEY")
+        assert health.status == "ok" and health.count == 2
+
+    def test_evds_error_health_is_error(self):
+        with patch.object(cal, "_fetch_evds_observations", return_value=[]):
+            _, health = cal.resolve_ppk(direction="cut", api_key="KEY")
+        assert health.status == "error"
+
+
+@pytest.mark.unit
+class TestOfficialNumbers:
+    def test_ok_when_series_return_data(self):
+        obs = [(date(2025, 1, 1), 45.0), (date(2025, 2, 1), 42.5)]
+        with patch.object(cal, "_fetch_evds_observations", return_value=obs):
+            text, healths = cal.get_macro_official_numbers(api_key="KEY")
+        assert "TCMB RESMİ VERİLER" in text
+        assert "Politika Faizi" in text and "USD/TRY" in text
+        assert all(h.status == "ok" for h in healths)
+
+    def test_no_key_reports_missing(self, monkeypatch):
+        monkeypatch.delenv("EVDS_API_KEY", raising=False)
+        text, healths = cal.get_macro_official_numbers(api_key=None)
+        assert "EVDS_API_KEY" in text
+        assert all(h.status == "empty" for h in healths)

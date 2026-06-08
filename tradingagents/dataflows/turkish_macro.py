@@ -25,7 +25,10 @@ picture by topic.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
+
+from tradingagents.dataflows.data_health import SourceHealth, OK, EMPTY, any_ok
 
 # Reuse the battle-tested RSS plumbing AND the vetted feed list from the sibling
 # module so both fetchers parse identical, already-working sources (the
@@ -38,6 +41,17 @@ from tradingagents.dataflows.turkish_news import (  # noqa: F401
     _fetch_feed,
     _strip_html,
 )
+
+
+@dataclass
+class MacroNewsResult:
+    """Themed macro-news block plus per-feed health for the data-health panel."""
+    text: str
+    sources: list[SourceHealth] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return any_ok(self.sources)
 
 # Theme buckets in priority order. The first bucket whose keyword set hits the
 # headline+summary claims the item, so policy-rate items outrank generic FX
@@ -89,21 +103,29 @@ def fetch_turkish_macro_news(
     max_items_per_theme: int = 4,
     timeout: float = 10.0,
     inter_request_delay: float = 0.3,
-) -> str:
-    """Fetch Turkish macro headlines, bucketed by theme, as a prompt block.
+) -> MacroNewsResult:
+    """Fetch Turkish macro headlines, bucketed by theme, with per-feed health.
 
     Pulls the macro feeds, keeps only items matching a macro theme, groups the
-    survivors by theme (priority order), and renders a plaintext block. Degrades
-    gracefully — returns a clear placeholder rather than raising when no macro
-    items are found or every feed is unreachable.
+    survivors by theme (priority order), and renders a plaintext block. Returns
+    a :class:`MacroNewsResult` carrying both the text and a :class:`SourceHealth`
+    per feed so the caller can surface data gaps loudly instead of silently
+    treating a placeholder as real news. Never raises.
     """
-    # Collect + de-duplicate across feeds (same headline can syndicate).
+    # Collect + de-duplicate across feeds (same headline can syndicate),
+    # recording per-feed health as we go.
     collected: list[dict] = []
     seen_titles: set[str] = set()
+    sources: list[SourceHealth] = []
     for i, (label, url) in enumerate(feeds):
         if i > 0:
             time.sleep(inter_request_delay)
-        for item in _fetch_feed(label, url, limit_per_feed, timeout):
+        items = _fetch_feed(label, url, limit_per_feed, timeout)
+        if items:
+            sources.append(SourceHealth(label, OK, count=len(items)))
+        else:
+            sources.append(SourceHealth(label, EMPTY, "yanıt yok / boş"))
+        for item in items:
             key = item["title"].casefold()
             if key in seen_titles:
                 continue
@@ -111,9 +133,10 @@ def fetch_turkish_macro_news(
             collected.append(item)
 
     if not collected:
-        return (
+        return MacroNewsResult(
             "<Türkçe makro haber kaynaklarına şu an ulaşılamadı "
-            f"({', '.join(label for label, _ in feeds)})>"
+            f"({', '.join(label for label, _ in feeds)})>",
+            sources,
         )
 
     # Bucket by theme, preserving feed order within each theme.
@@ -125,9 +148,10 @@ def fetch_turkish_macro_news(
             buckets[theme].append(item)
 
     if not any(buckets.values()):
-        return (
+        return MacroNewsResult(
             "<Güncel başlıklarda Türkiye makro temalı (faiz, enflasyon, kur, "
-            "büyüme, bütçe) bir haber tespit edilemedi>"
+            "büyüme, bütçe) bir haber tespit edilemedi>",
+            sources,
         )
 
     def _fmt(item: dict) -> str:
@@ -151,4 +175,4 @@ def fetch_turkish_macro_news(
             f"▸ {label}:\n"
             + "\n".join(_fmt(it) for it in items[:max_items_per_theme])
         )
-    return "\n\n".join(blocks)
+    return MacroNewsResult("\n\n".join(blocks), sources)
