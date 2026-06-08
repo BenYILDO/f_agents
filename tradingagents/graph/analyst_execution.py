@@ -44,6 +44,16 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         tool_node="tools_news",
         report_key="news_report",
     ),
+    "macro": AnalystNodeSpec(
+        # Türkiye macro analyst — BIST-wide regime read (TCMB/rate, inflation,
+        # lira, country risk). Auto-added for .IS tickers; see streamlit_app.py
+        # and macro_analyst.py.
+        key="macro",
+        agent_node="Macro Analyst",
+        clear_node="Msg Clear Macro",
+        tool_node="tools_macro",
+        report_key="macro_report",
+    ),
     "fundamentals": AnalystNodeSpec(
         key="fundamentals",
         agent_node="Fundamentals Analyst",

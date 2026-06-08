@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -101,9 +101,18 @@ class TestFetchFeed:
         assert "genişlemesi" in items[0]["summary"]  # html stripped
         assert items[0]["pub_date"].startswith("Sun, 07 Jun 2026")
 
-    def test_network_failure_fails_open(self):
-        with patch.object(turkish_news, "urlopen", side_effect=URLError("boom")):
+    def test_network_failure_fails_open_after_retries(self, monkeypatch):
+        monkeypatch.setattr(turkish_news, "_FETCH_BACKOFF", 0.0)  # no sleep in tests
+        with patch.object(turkish_news, "urlopen", side_effect=URLError("boom")) as m:
             assert turkish_news._fetch_feed("Test", "http://x", 10, 5.0) == []
+        assert m.call_count == turkish_news._FETCH_ATTEMPTS  # transient errors retried
+
+    def test_permanent_403_fails_fast_without_retry(self, monkeypatch):
+        monkeypatch.setattr(turkish_news, "_FETCH_BACKOFF", 0.0)
+        err = HTTPError("http://x", 403, "Forbidden", {}, None)
+        with patch.object(turkish_news, "urlopen", side_effect=err) as m:
+            assert turkish_news._fetch_feed("Test", "http://x", 10, 5.0) == []
+        assert m.call_count == 1  # 403 is permanent -> no retry
 
     def test_malformed_xml_fails_open(self):
         with self._patch_response(b"<<not xml>>"):
