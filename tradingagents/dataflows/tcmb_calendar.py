@@ -35,7 +35,12 @@ from tradingagents.dataflows.data_health import SourceHealth, OK, EMPTY, ERROR
 
 logger = logging.getLogger(__name__)
 
-_EVDS_BASE = "https://evds2.tcmb.gov.tr/service/evds"
+# TCMB migrated EVDS to the evds3 host in 2026; the legacy
+# evds2.tcmb.gov.tr/service/evds path now 302-redirects to the evds3 SPA and
+# returns HTML, so json.loads fails. The live REST base is now the igmevdsms-dis
+# service on evds3 (key still sent in the request header; same DD-MM-YYYY /
+# "Tarih" / "TP_APIFON4" response shape the parser below already expects).
+_EVDS_BASE = "https://evds3.tcmb.gov.tr/igmevdsms-dis"
 # 1-week repo policy rate, USD/TRY selling rate, and CPI. CPI has no default —
 # it is opt-in via env so we never guess a code we are unsure of.
 _DEFAULT_POLICY_RATE_SERIES = os.environ.get("EVDS_POLICY_RATE_SERIES", "TP.APIFON4")
@@ -126,22 +131,38 @@ def fetch_evds_series(
     return [], SourceHealth(label, ERROR, f"seri boş/erişilemedi ({series})", 0)
 
 
+# EVDS exposes the realized funding cost (TP.APIFON4), which mostly pins to the
+# announced policy rate but wobbles fractionally (e.g. 38.00 ↔ 37.30, or a
+# multi-day ramp 38 → 39.35 → 39.98 → 40.0 around a single decision). A naive
+# "any change is a decision" rule turns that sub-point noise into hundreds of
+# phantom PPK decisions. TCMB acts in ≥250bp steps in the current cycle, and the
+# observed funding-cost wobble stays under ~1.35 points, so we only register a
+# decision once the rate moves at least this far from the last *accepted* level —
+# collapsing both the wobble and the ramp into one decision. Tunable if TCMB
+# returns to sub-150bp moves.
+_MIN_RATE_CHANGE = 1.5
+
+
 def _decisions_from_rate_series(observations: list[tuple[date, float]]) -> list[dict]:
     """Derive PPK decisions from rate change points in an observation series.
 
-    A change vs. the previous non-null observation is a decision on that date,
-    direction ``hike`` (up) / ``cut`` (down). Holds are not emitted.
+    A move of at least :data:`_MIN_RATE_CHANGE` points vs. the last *accepted*
+    decision level is a decision on that date, direction ``hike`` (up) / ``cut``
+    (down). Holds and sub-threshold funding-cost wobble are not emitted.
     """
     decisions: list[dict] = []
-    prev: Optional[float] = None
+    last_accepted: Optional[float] = None
     for d, rate in observations:
-        if prev is not None and rate != prev:
+        if last_accepted is None:
+            last_accepted = rate
+            continue
+        if abs(rate - last_accepted) >= _MIN_RATE_CHANGE:
             decisions.append({
                 "date": d.strftime("%Y-%m-%d"),
                 "rate": rate,
-                "direction": "hike" if rate > prev else "cut",
+                "direction": "hike" if rate > last_accepted else "cut",
             })
-        prev = rate
+            last_accepted = rate
     return decisions
 
 
