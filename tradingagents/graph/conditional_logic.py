@@ -41,6 +41,19 @@ class ConditionalLogic:
             return "tools_news"
         return "Msg Clear News"
 
+    def should_continue_macro(self, state: AgentState):
+        """Determine if macro analysis should continue.
+
+        The macro analyst pre-fetches its data and does not call tools, so this
+        normally routes straight to the clear node after a single pass; the
+        tool-call branch is kept for symmetry with the other analysts.
+        """
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_macro"
+        return "Msg Clear Macro"
+
     def should_continue_fundamentals(self, state: AgentState):
         """Determine if fundamentals analysis should continue."""
         messages = state["messages"]

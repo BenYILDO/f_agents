@@ -57,6 +57,9 @@ class AgentState(MessagesState):
     news_report: Annotated[
         str, "Report from the News Researcher of current world affairs"
     ]
+    macro_report: Annotated[
+        str, "Report from the Türkiye Macro Analyst (BIST-wide regime; .IS tickers only)"
+    ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
 
     # researcher team discussion step

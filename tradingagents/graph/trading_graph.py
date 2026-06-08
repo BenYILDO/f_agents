@@ -189,6 +189,14 @@ class TradingAgentsGraph:
                     get_insider_transactions,
                 ]
             ),
+            "macro": ToolNode(
+                [
+                    # Macro analyst pre-fetches its data and does not call tools;
+                    # this node exists only to satisfy the graph's per-analyst
+                    # tool-node wiring and is never actually invoked.
+                    get_global_news,
+                ]
+            ),
             "fundamentals": ToolNode(
                 [
                     # Fundamental analysis tools
@@ -419,6 +427,7 @@ class TradingAgentsGraph:
             "market_report": final_state["market_report"],
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
+            "macro_report": final_state.get("macro_report", ""),
             "fundamentals_report": final_state["fundamentals_report"],
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],

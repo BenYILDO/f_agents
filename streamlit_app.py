@@ -21,6 +21,7 @@ import streamlit as st
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.agents.utils.rating import parse_rating, RATINGS_5_TIER
+from tradingagents.dataflows.symbol_utils import is_bist_ticker
 from tradingagents.strategy.dip_signal import (
     analyze as strategy_analyze,
     scan as strategy_scan,
@@ -69,6 +70,7 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
         ("Duygu / TR Haber & KAP (Sentiment)", state.get("sentiment_report")),
         ("Teknik (Market)", state.get("market_report")),
         ("Haber (News)", state.get("news_report")),
+        ("Makro (TR — TCMB/faiz, enflasyon, kur)", state.get("macro_report")),
         ("Trader Planı", state.get("trader_investment_plan")),
     ]:
         if body:
@@ -134,6 +136,11 @@ def render_ai_screen():
         return
 
     selected = [_ANALYSTS[l] for l in analyst_labels] or list(_ANALYSTS.values())
+    # Türk usulü: BIST (.IS) hisselerinde makro rejim analistini (TCMB/faiz,
+    # enflasyon, kur, ülke riski) otomatik ekle. BIST dışı enstrümanlarda
+    # küresel makroyu zaten Haber Analisti karşılıyor.
+    if is_bist_ticker(ticker) and "macro" not in selected:
+        selected.append("macro")
     config = {
         **DEFAULT_CONFIG,
         "llm_provider": "openai",
@@ -153,7 +160,8 @@ def render_ai_screen():
             ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
             benchmark = ta._resolve_benchmark(ticker)
             st.write(f"Benchmark (alpha için): **{benchmark}** · Rapor dili: **{language}**")
-            st.write("Ajanlar çalışıyor: Teknik → Duygu/TR-Haber → Haber → Temel → "
+            macro_note = " → Makro(TR)" if is_bist_ticker(ticker) else ""
+            st.write(f"Ajanlar çalışıyor: Teknik → Duygu/TR-Haber → Haber → Temel{macro_note} → "
                      "Araştırma → Trader → Risk → Karar…")
             final_state, _ = ta.propagate(ticker, date_str, asset_type=asset_type)
             status.update(label=f"{ticker} analizi tamamlandı ✓", state="complete", expanded=False)
@@ -184,7 +192,7 @@ def render_ai_screen():
     st.markdown(final_state.get("final_trade_decision") or "_(boş)_")
 
     tabs = st.tabs(["💬 Duygu / TR-Haber & KAP", "📊 Temel", "📈 Teknik",
-                    "📰 Haber", "🧠 Araştırma", "💼 Trader planı"])
+                    "📰 Haber", "🏛️ Makro-TR", "🧠 Araştırma", "💼 Trader planı"])
     with tabs[0]:
         st.markdown(final_state.get("sentiment_report") or "_(seçili değil)_")
     with tabs[1]:
@@ -194,6 +202,10 @@ def render_ai_screen():
     with tabs[3]:
         st.markdown(final_state.get("news_report") or "_(seçili değil)_")
     with tabs[4]:
+        st.caption("TCMB/faiz · enflasyon · kur · ülke riski → BIST geneli rejim ve sektör etkisi. "
+                   "Yalnızca BIST (.IS) hisseleri için otomatik üretilir.")
+        st.markdown(final_state.get("macro_report") or "_(BIST dışı — makro analizi üretilmedi)_")
+    with tabs[5]:
         deb = final_state.get("investment_debate_state", {}) or {}
         for head, key in [("🐂 Boğa", "bull_history"), ("🐻 Ayı", "bear_history"),
                           ("⚖️ Araştırma Yöneticisi", "judge_decision")]:
@@ -202,7 +214,7 @@ def render_ai_screen():
                 st.markdown(deb[key])
         if not deb:
             st.markdown("_(yok)_")
-    with tabs[5]:
+    with tabs[6]:
         st.markdown(final_state.get("trader_investment_plan") or "_(yok)_")
 
 
