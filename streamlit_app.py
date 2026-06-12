@@ -33,8 +33,10 @@ from tradingagents.strategy.dip_signal import (
     BIST_POPULAR,
 )
 from app_pages import (
+    combined_page,
     fundamental_page,
     gold_fx_page,
+    ml_page,
     seasonality_page,
     technical,
 )
@@ -92,11 +94,12 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    mode = st.radio("Ekran", ["🤖 AI Analizi", "🧰 Teknik Analiz", "📐 Dip-Al Stratejisi",
-                              "📅 Sezonsallık", "🥇 Altın & Döviz", "🧾 Temel Skor"])
+    mode = st.radio("Ekran", ["🤖 AI Analizi", "🎯 Birleşik Karar", "🧰 Teknik Analiz",
+                              "🧾 Temel Skor", "🔮 ML Sinyal", "📐 Dip-Al Stratejisi",
+                              "📅 Sezonsallık", "🥇 Altın & Döviz"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
-    if mode.startswith("🤖"):
+    if mode == "🤖 AI Analizi":
         if env_key:
             st.success("OpenAI anahtarı .env'den yüklendi ✓")
         else:
@@ -375,16 +378,20 @@ def render_scanner():
 
 
 # ── Yönlendirme ─────────────────────────────────────────────────────────────
-if mode.startswith("🤖"):
+if mode == "🤖 AI Analizi":
     render_ai_screen()
-elif mode.startswith("🧰"):
+elif mode == "🎯 Birleşik Karar":
+    combined_page.render()
+elif mode == "🧰 Teknik Analiz":
     technical.render()
-elif mode.startswith("📅"):
-    seasonality_page.render()
-elif mode.startswith("🥇"):
-    gold_fx_page.render()
-elif mode.startswith("🧾"):
+elif mode == "🧾 Temel Skor":
     fundamental_page.render()
+elif mode == "🔮 ML Sinyal":
+    ml_page.render()
+elif mode == "📅 Sezonsallık":
+    seasonality_page.render()
+elif mode == "🥇 Altın & Döviz":
+    gold_fx_page.render()
 else:
     render_strategy_screen()
     render_scanner()

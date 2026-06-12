@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 # (kod, Türkçe ad, yön, güç 1-3) — güç klasik literatürdeki güvenilirlik sırası
@@ -53,7 +54,10 @@ def detect_candlesticks(df: pd.DataFrame) -> pd.DataFrame:
     """
     o, h, l, c = df["Open"], df["High"], df["Low"], df["Close"]
     body = (c - o).abs()
-    rng = (h - l).replace(0, pd.NA)
+    # np.nan (pd.NA değil): pd.NA ile karşılaştırma yeni pandas/Python 3.14'te
+    # "boolean value of NA is ambiguous" hatası verir; float NaN ise güvenle
+    # False'a düşer. Sıfır-aralıklı bar (H=L, tavan/taban/durdurma) nadirdir.
+    rng = (h - l).replace(0, np.nan)
     upper = h - pd.concat([o, c], axis=1).max(axis=1)
     lower = pd.concat([o, c], axis=1).min(axis=1) - l
     bull = c > o

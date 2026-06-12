@@ -8,7 +8,45 @@ Breaking changes within the 0.x line are called out explicitly.
 
 ## [Unreleased]
 
-### Added
+### Fixed
+
+- **Technical Analysis screen crash** (`TypeError: boolean value of NA is
+  ambiguous`) on real/gappy data. `candlesticks.detect_candlesticks` used
+  `pd.NA` as a zero-range placeholder; comparisons against it raise on newer
+  pandas / Python 3.14. Switched to `np.nan`, which degrades safely to `False`.
+
+### Added — ratio scoring, trap filters, combined signal, ML
+
+- **Ratio scoring engine** (`analytics/ratio_score.py`) encoding the exact
+  thresholds from the strategy videos and producing a 0-100 score + **AL/TUT/
+  SAT** verdict: FD/FAVÖK (EV/EBITDA) 5-7 ideal / 15-20+ expensive, Cari Oran
+  1.5-2.5 ideal / <1 bankruptcy risk / >3 inefficient, Net Borç/FAVÖK <1.5
+  excellent / 3-4 risky, **reel ROE** (ROE vs inflation — below inflation =
+  real erosion), EFK (operating-profit) growth with a heavy penalty when
+  operations run at a loss, and real revenue growth. Banks/insurers get an
+  adapted criteria set (EV/EBITDA & debt ratios skipped, P/B used). Missing
+  data is never penalized (excluded from the denominator).
+- **Video-derived trap filters** in the composite engine: **aşırı coşku/ATH**
+  guard (near all-time-high + overbought RSI halves the buy score — the
+  "tahtacı kitlemesi" zone) and **düşen bıçak** guard (steep downtrend +
+  oversold with no reversal confirmation zeroes oversold-buy — don't catch a
+  falling knife). Added a **money-flow** component (OBV slope + volume-price
+  direction) that flags distribution ("yüksek hacimle düşüş = para çıkışı").
+- **Combined signal** (`analytics/combined.py`): merges fundamentals (ne
+  alınır) and technicals (ne zaman) into one trap-aware AL/SAT decision —
+  GÜÇLÜ AL only when fundamentals are sound, technicals are in a buy zone, and
+  no trap is active.
+- **ML signal model** (`tradingagents/ml/`): a gradient-boosting classifier
+  trained on-demand from the engine's features, with time-series-split
+  backtest reporting **skill** (accuracy above the majority-class baseline),
+  precision, AUC and a current up-probability. Adds `scikit-learn` dependency.
+- **Three new Streamlit screens**: 🎯 Birleşik Karar (combined decision + BIST
+  scanner ranked by combined score), 🔮 ML Sinyal (train + backtest + signal),
+  and an upgraded 🧾 Temel Skor screen (ratio verdict + criterion bands). The
+  Market and Fundamentals AI analysts now also receive the trap warnings and
+  ratio brief respectively.
+
+### Added — earlier in this cycle
 
 - **Deterministic analytics engine** (`tradingagents/analytics/`) — pure
   pandas/numpy, no LLM, no API key:

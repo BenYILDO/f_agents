@@ -211,11 +211,12 @@ class TestComposite:
         # BIST dışı sembol → TL stres ağ çağrısı yapılmaz; tamamen offline
         res = compute_composite("TEST", self._trending_df())
         assert res.ok
-        assert set(res.components) == {"trend", "momentum", "pattern", "dip",
-                                       "candle", "sr", "seasonality"}
+        assert set(res.components) == {"trend", "momentum", "pattern", "money_flow",
+                                       "dip", "candle", "sr", "seasonality"}
         assert res.components["trend"] > 0
         assert -100 <= res.score <= 100
         assert res.verdict in ("GÜÇLÜ AL", "AL", "NÖTR", "SAT", "GÜÇLÜ SAT")
+        assert set(res.guards) == {"asiri_cosku", "dusen_bicak"}
 
     def test_brief_renders(self):
         brief = build_technical_brief("TEST", self._trending_df())

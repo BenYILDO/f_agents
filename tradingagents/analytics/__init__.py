@@ -21,3 +21,12 @@ from tradingagents.analytics.composite import (  # noqa: F401
     build_technical_brief,
     CompositeResult,
 )
+from tradingagents.analytics.ratio_score import (  # noqa: F401
+    compute_ratio_score,
+    format_ratio_brief,
+    RatioScoreResult,
+)
+from tradingagents.analytics.combined import (  # noqa: F401
+    combined_signal,
+    CombinedResult,
+)

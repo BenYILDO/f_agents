@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -33,9 +34,12 @@ from tradingagents.analytics.support_resistance import (
 from tradingagents.dataflows.symbol_utils import is_bist_ticker
 from tradingagents.strategy.dip_signal import compute_signals
 
+# Ağırlıklar (toplam 100). money_flow eklendi (video: "para giriş-çıkışı hacimden
+# farklıdır; yüksek hacimle düşüş = dağıtım"). Trend/momentum bir miktar bu
+# bileşene yer açtı.
 WEIGHTS = {
-    "trend": 25, "momentum": 20, "pattern": 20, "dip": 10,
-    "candle": 10, "sr": 10, "seasonality": 5,
+    "trend": 22, "momentum": 16, "pattern": 17, "money_flow": 13,
+    "dip": 10, "candle": 8, "sr": 9, "seasonality": 5,
 }
 
 
@@ -43,8 +47,8 @@ WEIGHTS = {
 class CompositeResult:
     ok: bool
     ticker: str
-    score: float = 0.0          # [-100, +100], rejim çarpanı uygulanmış
-    raw_score: float = 0.0      # rejim çarpanı uygulanmadan önce
+    score: float = 0.0          # [-100, +100], guard + rejim çarpanı uygulanmış
+    raw_score: float = 0.0      # guard/rejim uygulanmadan önce
     verdict: str = "NÖTR"       # "GÜÇLÜ AL" | "AL" | "NÖTR" | "SAT" | "GÜÇLÜ SAT"
     confidence: str = "düşük"   # "düşük" | "orta" | "yüksek"
     components: dict = field(default_factory=dict)   # bileşen -> [-1, +1]
@@ -54,6 +58,8 @@ class CompositeResult:
     candles: list = field(default_factory=list)      # CandleHit listesi
     supports: list = field(default_factory=list)     # Level listesi
     resistances: list = field(default_factory=list)
+    guards: dict = field(default_factory=dict)       # tuzak adı -> aktif mi (bool)
+    warnings: list = field(default_factory=list)     # Türkçe tuzak uyarıları
     last_close: float = 0.0
     error: str = ""
 
@@ -122,6 +128,38 @@ def _momentum_component(ind: pd.DataFrame) -> tuple[float, str]:
     return max(-1.0, min(1.0, score)), ", ".join(notes) or "momentum verisi yetersiz"
 
 
+def _money_flow_component(ind: pd.DataFrame) -> tuple[float, str]:
+    """Para giriş-çıkışı [-1, +1] — OBV eğimi + hacim-fiyat yönü (dağıtım tespiti).
+
+    Video: hacmin artması tek başına anlamlı değildir; YÖNÜ önemlidir. Yüksek
+    hacimle düşüş = para çıkışı (mal boşaltma/dağıtım), yüksek hacimle yükseliş
+    = para girişi (toplama).
+    """
+    close, vol, obv = ind["Close"], ind["Volume"], ind["obv"]
+    score, notes = 0.0, []
+    if len(obv) > 11 and pd.notna(obv.iloc[-1]) and pd.notna(obv.iloc[-11]):
+        obv_slope = float(obv.iloc[-1] - obv.iloc[-11])
+        if obv_slope > 0:
+            score += 0.4; notes.append("OBV yükselişte (para girişi)")
+        elif obv_slope < 0:
+            score -= 0.4; notes.append("OBV düşüşte (para çıkışı)")
+    # Son 10 barda yön-ağırlıklı hacim: yukarı/aşağı hacim dengesizliği
+    ret = close.pct_change().tail(10)
+    v = vol.tail(10)
+    up_vol = float(v[ret > 0].sum())
+    down_vol = float(v[ret < 0].sum())
+    if up_vol > down_vol * 1.3:
+        score += 0.4; notes.append("yüksek hacimli alış baskısı (toplama)")
+    elif down_vol > up_vol * 1.3:
+        score -= 0.4; notes.append("yüksek hacimli satış baskısı (DAĞITIM)")
+    # Hacim teyidi: hacim ortalamanın üzerinde mi (hareketin gerçekliği)
+    if len(vol) >= 20 and pd.notna(vol.iloc[-1]):
+        vol_ma = float(vol.tail(20).mean())
+        if vol_ma and float(vol.iloc[-1]) > 1.5 * vol_ma:
+            notes.append("son bar hacmi ortalamanın belirgin üstünde")
+    return max(-1.0, min(1.0, score)), ", ".join(notes) or "belirgin para akışı yok"
+
+
 def _dip_component(df: pd.DataFrame) -> tuple[float, str]:
     """Mevcut dip-al stratejisinin (video.md) son-bar durumu [-1, +1]."""
     try:
@@ -134,6 +172,48 @@ def _dip_component(df: pd.DataFrame) -> tuple[float, str]:
     if bool(recent["sell"].any()):
         return -1.0, "dip-al stratejisi son barlarda SAT üretti"
     return 0.0, "dip-al sinyali yok"
+
+
+def _detect_guards(df: pd.DataFrame, ind: pd.DataFrame, candle_val: float,
+                   dip_val: float) -> tuple[dict, list[str]]:
+    """Video tuzaklarını tespit eder: aşırı coşku/ATH ve düşen bıçak.
+
+    Dönüş: (guards bool sözlüğü, Türkçe uyarı listesi). Bu guard'lar kompozit
+    skorun POZİTİF (alış) tarafını kısıtlar — yön üretmez, hatalı alımı eler.
+    """
+    guards: dict[str, bool] = {"asiri_cosku": False, "dusen_bicak": False}
+    warnings: list[str] = []
+    last = ind.iloc[-1]
+    close = float(last["Close"])
+
+    # Aşırı coşku / tarihi zirve tuzağı: fiyat son 252 barın tepesine yakın +
+    # RSI aşırı alımda → "tahtacının mal kitlediği" bölge (video: Ford örneği).
+    win = df["High"].tail(252)
+    if len(win) >= 60 and pd.notna(last["rsi14"]):
+        ath = float(win.max())
+        near_ath = close >= 0.97 * ath
+        if near_ath and float(last["rsi14"]) > 72:
+            guards["asiri_cosku"] = True
+            warnings.append("⚠️ Aşırı coşku/tarihi zirve: fiyat zirveye yakın ve RSI "
+                            "aşırı alımda — alım riskli (dağıtım/kitleme bölgesi olabilir).")
+
+    # Düşen bıçak tuzağı: sert düşüş trendi (fiyat SMA200'ün çok altında, ADX
+    # yüksek, eğim aşağı) + RSI dipte AMA dönüş teyidi yok → "ucuz" diye alma
+    # (video: 90→9 TL düşen hisse 4 TL'ye de gidebilir).
+    if pd.notna(last.get("sma200")) and pd.notna(last["rsi14"]) and pd.notna(last["adx14"]):
+        far_below = close < 0.85 * float(last["sma200"])
+        strong_down = float(last["adx14"]) >= 25
+        sma50 = ind["sma50"]
+        slope_down = bool(len(sma50) > 11 and pd.notna(sma50.iloc[-1])
+                          and pd.notna(sma50.iloc[-11]) and sma50.iloc[-1] < sma50.iloc[-11])
+        oversold = float(last["rsi14"]) < 38
+        # Dönüş teyidi: dip-al AL sinyali ya da boğa mum yükü
+        reversal = dip_val > 0 or candle_val > 0.3
+        if far_below and strong_down and slope_down and oversold and not reversal:
+            guards["dusen_bicak"] = True
+            warnings.append("⚠️ Düşen bıçak: güçlü düşüş trendi sürerken oversold — "
+                            "dönüş teyidi (para girişi/formasyon) gelmeden alım yapma.")
+    return guards, warnings
 
 
 def _verdict(score: float) -> str:
@@ -184,6 +264,7 @@ def compute_composite(ticker: str, df: pd.DataFrame | None = None) -> CompositeR
     details["sr"] = (f"yakın destek: {', '.join(str(s.price) for s in supports) or '—'} · "
                      f"yakın direnç: {', '.join(str(r.price) for r in resistances) or '—'}")
 
+    components["money_flow"], details["money_flow"] = _money_flow_component(ind)
     components["dip"], details["dip"] = _dip_component(df)
 
     season = compute_seasonality(df)
@@ -192,14 +273,23 @@ def compute_composite(ticker: str, df: pd.DataFrame | None = None) -> CompositeR
 
     raw = sum(WEIGHTS[k] * components[k] for k in WEIGHTS)
 
+    # Video tuzak filtreleri: aşırı coşku alış tarafını yarıya indirir, düşen
+    # bıçak pozitif (oversold) skoru sıfırlar — yanlış alımı eler, yön değil güven keser.
+    guards, warnings = _detect_guards(df, ind, components["candle"], components["dip"])
+    guarded = raw
+    if guards["asiri_cosku"] and guarded > 0:
+        guarded *= 0.4
+    if guards["dusen_bicak"] and guarded > 0:
+        guarded = min(guarded, 0.0)
+
     regime = compute_regime(df, is_bist=is_bist_ticker(ticker))
     mult = regime.confidence_mult if regime.ok else 0.8
-    score = round(raw * mult, 1)
+    score = round(guarded * mult, 1)
 
     abs_score = abs(score)
     aligned = sum(1 for v in components.values()
                   if (v > 0.15 and score > 0) or (v < -0.15 and score < 0))
-    if abs_score >= 40 and aligned >= 4 and mult >= 0.8:
+    if abs_score >= 40 and aligned >= 4 and mult >= 0.8 and not any(guards.values()):
         confidence = "yüksek"
     elif abs_score >= 20 and aligned >= 3:
         confidence = "orta"
@@ -212,7 +302,7 @@ def compute_composite(ticker: str, df: pd.DataFrame | None = None) -> CompositeR
         components={k: round(v, 2) for k, v in components.items()},
         details=details, regime=regime if regime.ok else None,
         patterns=hits, candles=candles, supports=supports, resistances=resistances,
-        last_close=round(close, 2),
+        guards=guards, warnings=warnings, last_close=round(close, 2),
     )
 
 
@@ -249,4 +339,7 @@ def build_technical_brief(ticker: str, df: pd.DataFrame | None = None) -> str:
     sup = ", ".join(f"{s.price} ({s.label})" for s in res.supports) or "—"
     resis = ", ".join(f"{r.price} ({r.label})" for r in res.resistances) or "—"
     lines += ["", f"Destek seviyeleri: {sup}", f"Direnç seviyeleri: {resis}"]
+    if res.warnings:
+        lines += ["", "TUZAK UYARILARI (video kuralları — alım tarafını kısıtlar):"]
+        lines += [f"  - {w}" for w in res.warnings]
     return "\n".join(lines)

@@ -15,16 +15,23 @@ from tradingagents.dataflows.config import get_config
 
 @lru_cache(maxsize=32)
 def _cached_fundamental_brief(ticker: str, trade_date: str) -> str:
-    """Deterministik temel skor (Piotroski-tarzı) — (ticker, tarih) başına bir kez.
+    """Deterministik temel brif (Piotroski + video rasyo puanı) — bir kez hesaplanır.
 
     Düğüm tool-çağrı döngüsünde tekrar çalışır; brif cache'lenir. Hata
     durumunda fail-open placeholder döner (ajan tool'larıyla devam eder).
     """
+    parts: list[str] = []
     try:
         from tradingagents.analytics.fundamental_score import format_fundamental_brief
-        return format_fundamental_brief(ticker)
+        parts.append(format_fundamental_brief(ticker))
     except Exception as exc:  # noqa: BLE001
-        return f"<Deterministik temel skor üretilemedi: {type(exc).__name__}: {exc}>"
+        parts.append(f"<Piotroski skoru üretilemedi: {type(exc).__name__}: {exc}>")
+    try:
+        from tradingagents.analytics.ratio_score import format_ratio_brief
+        parts.append(format_ratio_brief(ticker))
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"<Rasyo puanı üretilemedi: {type(exc).__name__}: {exc}>")
+    return "\n\n".join(parts)
 
 
 def create_fundamentals_analyst(llm):
