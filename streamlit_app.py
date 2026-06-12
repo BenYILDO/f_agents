@@ -1,11 +1,15 @@
 """BIST TradingAgents — Streamlit arayüzü.
 
-İki ekran:
-  🤖 AI Analizi      — çok-ajanlı LLM analizi (TradingAgentsGraph.propagate)
+Ekranlar:
+  🤖 AI Analizi        — çok-ajanlı LLM analizi (TradingAgentsGraph.propagate)
+  🧰 Teknik Analiz     — formasyon/destek-direnç/rejim + kompozit skor, LLM yok
   📐 Dip-Al Stratejisi — video.md teknik stratejisi (SMI+VWMA+Bollinger), LLM yok
+  📅 Sezonsallık       — ay/gün bazlı tarihsel istatistikler, LLM yok
+  🥇 Altın & Döviz     — ons/gram altın, USDTRY, TL stres göstergesi, LLM yok
+  🧾 Temel Skor        — Piotroski-tarzı sağlamlık skoru + rasyolar, LLM yok
 
 Çalıştırma:  streamlit run streamlit_app.py
-Anahtar:     .env içindeki OPENAI_API_KEY (import'ta load_dotenv ile yüklenir)
+Anahtar:     .env içindeki OPENAI_API_KEY (yalnız AI Analizi ekranı için gerekir)
 """
 
 from __future__ import annotations
@@ -27,6 +31,12 @@ from tradingagents.strategy.dip_signal import (
     scan as strategy_scan,
     INTERVALS,
     BIST_POPULAR,
+)
+from app_pages import (
+    fundamental_page,
+    gold_fx_page,
+    seasonality_page,
+    technical,
 )
 
 st.set_page_config(page_title="BIST TradingAgents", page_icon="📈", layout="wide")
@@ -71,6 +81,7 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
         ("Teknik (Market)", state.get("market_report")),
         ("Haber (News)", state.get("news_report")),
         ("Makro (TR — TCMB/faiz, enflasyon, kur)", state.get("macro_report")),
+        ("Siyaset/Jeopolitik (TR — risk primi)", state.get("geopolitics_report")),
         ("Trader Planı", state.get("trader_investment_plan")),
     ]:
         if body:
@@ -81,7 +92,8 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    mode = st.radio("Ekran", ["🤖 AI Analizi", "📐 Dip-Al Stratejisi"])
+    mode = st.radio("Ekran", ["🤖 AI Analizi", "🧰 Teknik Analiz", "📐 Dip-Al Stratejisi",
+                              "📅 Sezonsallık", "🥇 Altın & Döviz", "🧾 Temel Skor"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
     if mode.startswith("🤖"):
@@ -102,7 +114,7 @@ with st.sidebar:
                                         default=list(_ANALYSTS.keys()))
         st.caption("💡 Her analiz OpenAI kredisi harcar. Derinlik arttıkça maliyet/süre artar.")
     else:
-        st.caption("📐 Dip-Al stratejisi tamamen yereldir (LLM yok, ücretsiz, anlıktır).")
+        st.caption("🔓 Bu ekran tamamen yereldir (LLM yok, ücretsiz, anlıktır).")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -137,10 +149,13 @@ def render_ai_screen():
 
     selected = [_ANALYSTS[l] for l in analyst_labels] or list(_ANALYSTS.values())
     # Türk usulü: BIST (.IS) hisselerinde makro rejim analistini (TCMB/faiz,
-    # enflasyon, kur, ülke riski) otomatik ekle. BIST dışı enstrümanlarda
-    # küresel makroyu zaten Haber Analisti karşılıyor.
-    if is_bist_ticker(ticker) and "macro" not in selected:
-        selected.append("macro")
+    # enflasyon, kur, ülke riski) ve jeopolitik/siyaset analistini (siyasi şok
+    # takvimi + olay etüdü) otomatik ekle. BIST dışı enstrümanlarda küresel
+    # makroyu/jeopolitiği zaten Haber Analisti karşılıyor.
+    if is_bist_ticker(ticker):
+        for auto_key in ("macro", "geopolitics"):
+            if auto_key not in selected:
+                selected.append(auto_key)
     config = {
         **DEFAULT_CONFIG,
         "llm_provider": "openai",
@@ -160,7 +175,7 @@ def render_ai_screen():
             ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
             benchmark = ta._resolve_benchmark(ticker)
             st.write(f"Benchmark (alpha için): **{benchmark}** · Rapor dili: **{language}**")
-            macro_note = " → Makro(TR)" if is_bist_ticker(ticker) else ""
+            macro_note = " → Makro(TR) → Siyaset(TR)" if is_bist_ticker(ticker) else ""
             st.write(f"Ajanlar çalışıyor: Teknik → Duygu/TR-Haber → Haber → Temel{macro_note} → "
                      "Araştırma → Trader → Risk → Karar…")
             final_state, _ = ta.propagate(ticker, date_str, asset_type=asset_type)
@@ -199,7 +214,8 @@ def render_ai_screen():
     st.markdown(final_state.get("final_trade_decision") or "_(boş)_")
 
     tabs = st.tabs(["💬 Duygu / TR-Haber & KAP", "📊 Temel", "📈 Teknik",
-                    "📰 Haber", "🏛️ Makro-TR", "🧠 Araştırma", "💼 Trader planı"])
+                    "📰 Haber", "🏛️ Makro-TR", "🗳️ Siyaset-TR", "🧠 Araştırma",
+                    "💼 Trader planı"])
     with tabs[0]:
         st.markdown(final_state.get("sentiment_report") or "_(seçili değil)_")
     with tabs[1]:
@@ -219,6 +235,11 @@ def render_ai_screen():
                 st.code(macro_health, language=None)
         st.markdown(final_state.get("macro_report") or "_(BIST dışı — makro analizi üretilmedi)_")
     with tabs[5]:
+        st.caption("İç siyaset · jeopolitik gerilim · seçim takvimi · siyasi şok olay-etüdü "
+                   "→ risk primi ve hisse etkisi. Yalnızca BIST (.IS) hisseleri için üretilir.")
+        st.markdown(final_state.get("geopolitics_report")
+                    or "_(BIST dışı — siyasi risk analizi üretilmedi)_")
+    with tabs[6]:
         deb = final_state.get("investment_debate_state", {}) or {}
         for head, key in [("🐂 Boğa", "bull_history"), ("🐻 Ayı", "bear_history"),
                           ("⚖️ Araştırma Yöneticisi", "judge_decision")]:
@@ -227,7 +248,7 @@ def render_ai_screen():
                 st.markdown(deb[key])
         if not deb:
             st.markdown("_(yok)_")
-    with tabs[6]:
+    with tabs[7]:
         st.markdown(final_state.get("trader_investment_plan") or "_(yok)_")
 
 
@@ -356,6 +377,14 @@ def render_scanner():
 # ── Yönlendirme ─────────────────────────────────────────────────────────────
 if mode.startswith("🤖"):
     render_ai_screen()
+elif mode.startswith("🧰"):
+    technical.render()
+elif mode.startswith("📅"):
+    seasonality_page.render()
+elif mode.startswith("🥇"):
+    gold_fx_page.render()
+elif mode.startswith("🧾"):
+    fundamental_page.render()
 else:
     render_strategy_screen()
     render_scanner()

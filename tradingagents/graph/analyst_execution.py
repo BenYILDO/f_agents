@@ -54,6 +54,16 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         tool_node="tools_macro",
         report_key="macro_report",
     ),
+    "geopolitics": AnalystNodeSpec(
+        # Türkiye geopolitics analyst — domestic-politics & geopolitical risk
+        # read (siyasi şok takvimi + olay etüdü). Auto-added for .IS tickers
+        # alongside macro; see streamlit_app.py and geopolitics_analyst.py.
+        key="geopolitics",
+        agent_node="Geopolitics Analyst",
+        clear_node="Msg Clear Geopolitics",
+        tool_node="tools_geopolitics",
+        report_key="geopolitics_report",
+    ),
     "fundamentals": AnalystNodeSpec(
         key="fundamentals",
         agent_node="Fundamentals Analyst",

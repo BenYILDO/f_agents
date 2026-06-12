@@ -15,6 +15,7 @@ def create_bear_researcher(llm):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         macro_report = state.get("macro_report", "")
+        geopolitics_report = state.get("geopolitics_report", "")
         fundamentals_report = state["fundamentals_report"]
         instrument_context = get_instrument_context_from_state(state)
         asset_type = state.get("asset_type", "stock")
@@ -42,6 +43,7 @@ Market research report: {market_research_report}
 Social media sentiment report: {sentiment_report}
 Latest world affairs news: {news_report}
 Türkiye macro outlook (BIST-wide regime; .IS tickers only): {macro_report}
+Türkiye political/geopolitical risk report (.IS tickers only): {geopolitics_report}
 {fundamentals_label}: {fundamentals_report}
 Conversation history of the debate: {history}
 Last bull argument: {current_response}

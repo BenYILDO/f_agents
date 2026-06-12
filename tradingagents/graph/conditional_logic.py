@@ -54,6 +54,18 @@ class ConditionalLogic:
             return "tools_macro"
         return "Msg Clear Macro"
 
+    def should_continue_geopolitics(self, state: AgentState):
+        """Determine if geopolitics analysis should continue.
+
+        Like the macro analyst, the geopolitics analyst pre-fetches its data
+        and does not call tools; the tool-call branch exists for symmetry.
+        """
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_geopolitics"
+        return "Msg Clear Geopolitics"
+
     def should_continue_fundamentals(self, state: AgentState):
         """Determine if fundamentals analysis should continue."""
         messages = state["messages"]

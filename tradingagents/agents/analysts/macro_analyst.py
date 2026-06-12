@@ -32,6 +32,7 @@ from tradingagents.dataflows.macro_event_study import (
     compute_event_study,
     format_event_study,
 )
+from tradingagents.dataflows.gold_fx import fetch_gold_fx_snapshot
 from tradingagents.dataflows.data_health import (
     SourceHealth, OK, EMPTY, ERROR, any_ok, render_health,
 )
@@ -121,8 +122,9 @@ def create_macro_analyst(llm):
         news = fetch_turkish_macro_news()
         official_text, official_health = get_macro_official_numbers()
         event_text, event_health, ppk_health = _build_event_study(ticker, news.text)
+        gold_fx = fetch_gold_fx_snapshot()
 
-        health = [*news.sources, *official_health, event_health]
+        health = [*news.sources, *official_health, event_health, *gold_fx.sources]
         if ppk_health is not None:
             health.append(ppk_health)
         health_text = render_health(health)
@@ -140,6 +142,7 @@ def create_macro_analyst(llm):
 
         system_message = _build_system_message(
             current_date, official_text, news.text, event_text, health_text,
+            gold_fx.text,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -173,7 +176,7 @@ def create_macro_analyst(llm):
 
 def _build_system_message(
     current_date: str, official_block: str, macro_block: str,
-    event_block: str, health_block: str,
+    event_block: str, health_block: str, gold_fx_block: str = "",
 ) -> str:
     """Assemble the macro-analyst system message from all pre-fetched blocks."""
     return f"""You are the Türkiye Macro Analyst on a Borsa İstanbul (BIST) trading desk. Your job is NOT to analyze one company — it is to read the domestic macro regime as of {current_date} and translate it into a *market-wide and sector* signal that the rest of the desk weighs alongside the company-specific reports.
@@ -193,6 +196,14 @@ These add color and timeliness on top of the official numbers, grouped by theme 
 <start_of_macro_news>
 {macro_block}
 <end_of_macro_news>
+
+## Gold & FX snapshot (deterministic, computed) — the Turkish saver's benchmark
+
+Gram altın ve dolar, Türk yatırımcının BIST'e karşı fiili alternatifleridir. Use this computed block to judge the *relative* attractiveness of equities: when gold/FX have sharply outperformed BIST in TL terms, domestic flows tend to rotate away from equities (and vice versa). The XU100/gram-gold ratio percentile tells you whether BIST is historically cheap or rich in real (gold) terms.
+
+<start_of_gold_fx>
+{gold_fx_block}
+<end_of_gold_fx>
 
 ## Data health — be honest about what was actually available
 

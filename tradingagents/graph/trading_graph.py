@@ -197,6 +197,14 @@ class TradingAgentsGraph:
                     get_global_news,
                 ]
             ),
+            "geopolitics": ToolNode(
+                [
+                    # Geopolitics analyst pre-fetches its data (political news
+                    # filter + shock calendar + event study) and does not call
+                    # tools; node exists only for the per-analyst wiring.
+                    get_global_news,
+                ]
+            ),
             "fundamentals": ToolNode(
                 [
                     # Fundamental analysis tools
@@ -429,6 +437,7 @@ class TradingAgentsGraph:
             "news_report": final_state["news_report"],
             "macro_report": final_state.get("macro_report", ""),
             "macro_data_health": final_state.get("macro_data_health", ""),
+            "geopolitics_report": final_state.get("geopolitics_report", ""),
             "fundamentals_report": final_state["fundamentals_report"],
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],

@@ -63,6 +63,9 @@ class AgentState(MessagesState):
     macro_data_health: Annotated[
         str, "Per-source health summary for the macro analyst's data (RSS/EVDS/price)"
     ]
+    geopolitics_report: Annotated[
+        str, "Report from the Türkiye Geopolitics Analyst (political risk; .IS tickers only)"
+    ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
 
     # researcher team discussion step

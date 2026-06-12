@@ -17,6 +17,7 @@ def create_aggressive_debator(llm):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         macro_report = state.get("macro_report", "")
+        geopolitics_report = state.get("geopolitics_report", "")
         fundamentals_report = state["fundamentals_report"]
         instrument_context = get_instrument_context_from_state(state)
 
@@ -33,6 +34,7 @@ Market Research Report: {market_research_report}
 Social Media Sentiment Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Türkiye Macro Outlook (BIST-wide regime; .IS tickers only): {macro_report}
+Türkiye Political/Geopolitical Risk Report (.IS tickers only): {geopolitics_report}
 Company Fundamentals Report: {fundamentals_report}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [Unreleased]
+
+### Added
+
+- **Deterministic analytics engine** (`tradingagents/analytics/`) — pure
+  pandas/numpy, no LLM, no API key:
+  - Chart-pattern detection via zigzag pivots: double top/bottom,
+    (inverse) head & shoulders, ascending/descending/symmetric triangles,
+    with confirmed-vs-forming status and neckline/target levels.
+  - Candlestick patterns (15 classics: engulfing, hammer, morning/evening
+    star, three soldiers/crows, harami, doji…) with trend-context filtering.
+  - Support/resistance: pivot clustering (touch-count strength) + Fibonacci
+    retracements + classic pivot points.
+  - Seasonality: monthly/day-of-week return statistics with small-sample
+    neutralization (<5 years → score zeroed).
+  - Market regime: realized-vol percentile + ADX trend read + **TL stress
+    gauge** (USDTRY momentum/vol) that automatically cuts signal confidence
+    in turbulent regimes.
+  - **Composite technical score** [-100, +100] combining trend, momentum,
+    patterns, candles, S/R, seasonality and the dip-al strategy with
+    regime-adjusted confidence.
+  - Piotroski-style **fundamental soundness score** + valuation ratios from
+    yfinance statements (inflation-aware: rewards margin/leverage direction,
+    not nominal growth).
+- **Geopolitics Analyst (Türkiye)** — new graph node auto-added for `.IS`
+  tickers: curated political shock calendar (2013→: Gezi, 15 Temmuz, Brunson,
+  MB governor changes, KKM, 2023 elections, deprem, Mart 2025…), filtered
+  political headlines, and a deterministic event study of how the target
+  ticker behaved after past political shocks. Reports flow to researchers
+  and the risk team alongside the macro report.
+- **Gold & FX dataflow** (`dataflows/gold_fx.py`): ounce/gram gold, USDTRY,
+  BIST 100 TL-return comparison and the XU100/gram-gold real-level ratio;
+  injected into the Macro analyst's prompt with per-source health.
+- **Deterministic briefs injected into AI analysts**: the Market analyst now
+  receives the computed technical brief (patterns/S/R/seasonality/regime/
+  composite) and the Fundamentals analyst the computed soundness score —
+  the LLM interprets engine output instead of inventing pattern claims.
+- **Four new Streamlit screens** (all LLM-free): 🧰 Teknik Analiz (composite
+  panel, patterns, S/R chart overlays), 📅 Sezonsallık (monthly heat chart),
+  🥇 Altın & Döviz (TL return race, TL stress badge), 🧾 Temel Skor; plus a
+  🗳️ Siyaset-TR tab in the AI analysis screen.
+
 ## [0.2.5] — 2026-05-11
 
 ### Added

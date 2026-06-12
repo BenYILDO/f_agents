@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
@@ -9,11 +11,29 @@ from tradingagents.agents.utils.agent_utils import (
 from tradingagents.dataflows.config import get_config
 
 
+@lru_cache(maxsize=32)
+def _cached_technical_brief(ticker: str, trade_date: str) -> str:
+    """Deterministik teknik brif — (ticker, tarih) başına bir kez hesaplanır.
+
+    Market analyst düğümü tool-çağrı döngüsünde birden çok kez çalışır; brif
+    her turda yeniden çekilmesin diye cache'lenir. Hata durumunda analiz
+    akışını bozmamak için tek satırlık placeholder döner (fail-open: ajan
+    tool'larıyla yine de teknik analiz üretebilir).
+    """
+    try:
+        from tradingagents.analytics.composite import build_technical_brief
+        return build_technical_brief(ticker)
+    except Exception as exc:  # noqa: BLE001
+        return f"<Deterministik teknik brif üretilemedi: {type(exc).__name__}: {exc}>"
+
+
 def create_market_analyst(llm):
 
     def market_analyst_node(state):
         current_date = state["trade_date"]
+        ticker = state["company_of_interest"]
         instrument_context = get_instrument_context_from_state(state)
+        technical_brief = _cached_technical_brief(ticker, current_date)
 
         tools = [
             get_stock_data,
@@ -49,6 +69,16 @@ Volume-Based Indicators:
 - Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names.
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
+
+## Pre-computed deterministic technical brief (chart patterns, S/R, seasonality, regime)
+
+The block below was COMPUTED from real price history by the desk's deterministic engine — chart-pattern detection (OBO, double top/bottom, triangles), candlestick patterns, clustered support/resistance, seasonality statistics, volatility/trend regime and a weighted composite score. These are calculations an LLM cannot reliably derive from raw CSV, so treat them as ground truth, weave them into your report explicitly (especially active patterns, nearest S/R levels and the regime read), and NEVER contradict them with invented pattern claims. If the block is a "<...üretilemedi>" placeholder, proceed with tools only and say the deterministic engine was unavailable.
+
+<start_of_technical_brief>
+"""
+            + technical_brief
+            + """
+<end_of_technical_brief>
 
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
