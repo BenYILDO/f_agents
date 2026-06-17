@@ -26,6 +26,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.agents.utils.rating import parse_rating, RATINGS_5_TIER
 from tradingagents.dataflows.symbol_utils import is_bist_ticker
+from tradingagents.storage.supabase_client import is_configured
 from tradingagents.strategy.dip_signal import (
     analyze as strategy_analyze,
     scan as strategy_scan,
@@ -37,6 +38,7 @@ from app_pages import (
     fundamental_page,
     gold_fx_page,
     ml_page,
+    portfolio_page,
     seasonality_page,
     technical,
 )
@@ -94,9 +96,9 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    mode = st.radio("Ekran", ["🤖 AI Analizi", "🎯 Birleşik Karar", "🧰 Teknik Analiz",
-                              "🧾 Temel Skor", "🔮 ML Sinyal", "📐 Dip-Al Stratejisi",
-                              "📅 Sezonsallık", "🥇 Altın & Döviz"])
+    mode = st.radio("Ekran", ["💼 Portföyüm", "🤖 AI Analizi", "🎯 Birleşik Karar",
+                              "🧰 Teknik Analiz", "🧾 Temel Skor", "🔮 ML Sinyal",
+                              "📐 Dip-Al Stratejisi", "📅 Sezonsallık", "🥇 Altın & Döviz"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
     if mode == "🤖 AI Analizi":
@@ -116,6 +118,12 @@ with st.sidebar:
         analyst_labels = st.multiselect("Analistler", list(_ANALYSTS.keys()),
                                         default=list(_ANALYSTS.keys()))
         st.caption("💡 Her analiz OpenAI kredisi harcar. Derinlik arttıkça maliyet/süre artar.")
+    elif mode == "💼 Portföyüm":
+        if is_configured():
+            st.success("Supabase bağlı ✓")
+        else:
+            st.warning("Supabase bağlı değil — kurulum: docs/SUPABASE_SETUP.md")
+        st.caption("LLM yok · veriler Supabase'de saklanır · saat başı otomatik analiz.")
     else:
         st.caption("🔓 Bu ekran tamamen yereldir (LLM yok, ücretsiz, anlıktır).")
 
@@ -378,7 +386,9 @@ def render_scanner():
 
 
 # ── Yönlendirme ─────────────────────────────────────────────────────────────
-if mode == "🤖 AI Analizi":
+if mode == "💼 Portföyüm":
+    portfolio_page.render()
+elif mode == "🤖 AI Analizi":
     render_ai_screen()
 elif mode == "🎯 Birleşik Karar":
     combined_page.render()
