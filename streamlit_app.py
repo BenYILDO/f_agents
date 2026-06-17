@@ -123,7 +123,7 @@ with st.sidebar:
         st.caption("💡 Her analiz OpenAI kredisi harcar. Derinlik arttıkça maliyet/süre artar.")
     elif mode == "💼 Portföyüm":
         if is_configured():
-            st.success("Supabase bağlı ✓")
+            st.success("Supabase anahtarları yüklü ✓")
         else:
             st.warning("Supabase bağlı değil — kurulum: docs/SUPABASE_SETUP.md")
         st.caption("LLM yok · veriler Supabase'de saklanır · saat başı otomatik analiz.")

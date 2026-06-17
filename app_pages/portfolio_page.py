@@ -250,7 +250,19 @@ def render() -> None:
         holdings = portfolio.list_holdings()
     except SupabaseError as e:
         st.error(f"Portföy okunamadı: {e}")
-        _config_warning()
+        msg = str(e)
+        if "401" in msg or "Invalid API key" in msg or "JWT" in msg:
+            st.warning(
+                "🔑 **Anahtar reddedildi.** `SUPABASE_SERVICE_KEY` yanlış/eksik "
+                "kopyalanmış olabilir. Supabase → Settings → API'den **service_role** "
+                "anahtarını (genelde `eyJ…` ile başlayan JWT) **sondaki nokta/boşluk "
+                "olmadan** kopyalayıp Streamlit secrets'ı güncelle, sonra **Reboot app**."
+            )
+        elif "404" in msg or "does not exist" in msg or "relation" in msg:
+            st.warning("🗄️ Tablolar yok gibi. `tradingagents/storage/schema.sql`'i "
+                       "Supabase SQL Editor'de çalıştırdın mı?")
+        else:
+            _config_warning()
         return
 
     _add_form()
