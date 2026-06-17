@@ -151,3 +151,14 @@ class SupabaseREST:
             f"{self._base}/{table}", headers=self._headers(), params=params, timeout=self.timeout
         )
         self._raise_for_status(resp)
+
+    def rpc(self, fn: str, params: dict[str, Any] | None = None) -> Any:
+        """POST /rpc/<fn> — bir Postgres fonksiyonunu çağırır (örn. retention)."""
+        resp = requests.post(
+            f"{self._base}/rpc/{fn}",
+            headers=self._headers(),
+            json=params or {},
+            timeout=self.timeout,
+        )
+        self._raise_for_status(resp)
+        return resp.json() if resp.content else None

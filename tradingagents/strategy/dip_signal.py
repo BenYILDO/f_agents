@@ -42,6 +42,18 @@ BIST_POPULAR = [
     "CCOLA.IS", "ULKER.IS", "ISDMR.IS", "DOHOL.IS",
 ]
 
+# BIST 30 endeksi (yaklaşık güncel bileşenler) — saat başı sürekli taranan
+# çekirdek evren. Endeks bileşenleri dönemsel değişir; düzenlemek için satır
+# ekle/çıkar ya da çalışma anında BIST30_TICKERS ortam değişkeniyle ez
+# (virgülle ayrılmış). Hepsi Yahoo ``.IS`` formatında.
+BIST30 = [
+    "AKBNK.IS", "ALARK.IS", "ASELS.IS", "ASTOR.IS", "BIMAS.IS", "EKGYO.IS",
+    "ENKAI.IS", "EREGL.IS", "FROTO.IS", "GARAN.IS", "GUBRF.IS", "HEKTS.IS",
+    "ISCTR.IS", "KCHOL.IS", "KONTR.IS", "KOZAL.IS", "KRDMD.IS", "MGROS.IS",
+    "OYAKC.IS", "PETKM.IS", "PGSUS.IS", "SAHOL.IS", "SASA.IS", "SISE.IS",
+    "TCELL.IS", "THYAO.IS", "TOASO.IS", "TUPRS.IS", "VAKBN.IS", "YKBNK.IS",
+]
+
 # Kullanıcı/zaman-dilimi seçenekleri -> (yfinance interval, fetch period, resample kuralı)
 INTERVALS = {
     "Günlük (1g)": ("1d", "2y", None),

@@ -1,0 +1,51 @@
+name: Saat başı BIST analizi
+
+# Portföy (Supabase holdings) + BIST 30 için saat başı deterministik analiz
+# çalıştırır ve snapshot'ları Supabase'e yazar. LLM yok → kredi harcamaz.
+#
+# Gerekli repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY
+# Secrets yokken iş sessizce atlanır (kırmızı vermez) — bkz. docs/SUPABASE_SETUP.md
+
+on:
+  schedule:
+    # BIST seansı (TR 10:00–18:00 ≈ UTC 07:00–15:00), Pazartesi–Cuma, saat başı.
+    # Not: GitHub cron'u yoğunlukta birkaç dakika gecikebilir.
+    - cron: "0 7-15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Analiz kapsamı"
+        type: choice
+        options: [all, portfolio, bist30]
+        default: all
+
+concurrency:
+  group: hourly-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements-hourly.txt
+
+      - name: Bağımlılıkları kur (minimal, LLM'siz)
+        run: pip install -r scripts/requirements-hourly.txt
+
+      - name: Saat başı analiz + snapshot
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BIST30_TICKERS: ${{ vars.BIST30_TICKERS }}
+        run: |
+          python scripts/run_hourly_analysis.py \
+            --scope "${{ github.event.inputs.scope || 'all' }}" \
+            --prune --retain-days 90

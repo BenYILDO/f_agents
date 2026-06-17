@@ -1,0 +1,9 @@
+# Saat başı zamanlayıcı (GitHub Actions) için minimal bağımlılıklar.
+# Yalnız deterministik analiz yolu çalışır — LLM/langchain GEREKMEZ.
+# (tradingagents paketi repo kökünden import edilir; kurulum gerekmez.)
+numpy>=1.26.0
+pandas>=2.3.0
+requests>=2.32.4
+yfinance>=1.4.1
+python-dotenv>=1.0.0
+certifi>=2024.0.0
