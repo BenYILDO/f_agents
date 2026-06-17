@@ -35,6 +35,26 @@
 - [2026-02] **TradingAgents v0.2.0** released with multi-provider LLM support (GPT-5.x, Gemini 3.x, Claude 4.x, Grok 4.x) and improved system architecture.
 - [2026-01] **Trading-R1** [Technical Report](https://arxiv.org/abs/2509.11420) released, with [Terminal](https://github.com/TauricResearch/Trading-R1) expected to land soon.
 
+## BIST Portföy Takibi & Saatlik Sinyaller (Streamlit)
+
+Borsa İstanbul'a özel, **LLM gerektirmeyen** bir portföy + sinyal katmanı
+(`streamlit run streamlit_app.py`). Veriler **Supabase** (ücretsiz Postgres),
+saatlik analiz **GitHub Actions** cron'u ile üretilir — VPS gerekmez.
+
+- **💼 Portföyüm** — elindeki hisseler (adet, alış fiyatı, tarih); canlı kâr/zarar,
+  maliyet ortalaması, portföy ağırlığı. Hisse **eklenir eklenmez anında analiz**
+  edilir ve saat başı döngüye girer; satır silme ile düşer.
+- **📡 BIST 30 Tarayıcı** — rasyo + teknik birleşik AL/SAT sinyalleri; saat başı
+  otomatik güncellenir (tarayıcı kapalıyken de birikir) + "Şimdi tara".
+- **🤖 AI Analizi → 🧺 Sepet** — mevcut tekli çok-ajan analizine ek olarak
+  portföyden seçip toplu AI analizi (yalnız elle tetiklenir; kredi harcar).
+- **Güven katmanı** — çoklu-yöntem mutabakatı (teknik+rasyo+dip), sinyal istikrarı
+  (flip-flop) ve sinyal karnesi (ileri getiri + isabet oranı) + veri tazeliği uyarıları.
+
+Kurulum (Supabase projesi → `tradingagents/storage/schema.sql` → Streamlit/Actions
+secrets → deploy): **[docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)**. Saatlik iş
+`scripts/run_hourly_analysis.py` + `.github/workflows/hourly-analysis.yml`.
+
 <div align="center">
 <a href="https://www.star-history.com/#TauricResearch/TradingAgents&Date">
  <picture>
