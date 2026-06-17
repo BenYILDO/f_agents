@@ -26,7 +26,8 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.agents.utils.rating import parse_rating, RATINGS_5_TIER
 from tradingagents.dataflows.symbol_utils import is_bist_ticker
-from tradingagents.storage.supabase_client import is_configured
+from tradingagents.storage import portfolio
+from tradingagents.storage.supabase_client import SupabaseError, SupabaseREST, is_configured
 from tradingagents.strategy.dip_signal import (
     analyze as strategy_analyze,
     scan as strategy_scan,
@@ -133,6 +134,123 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════════════════════
 # 🤖 AI ANALİZİ EKRANI
 # ════════════════════════════════════════════════════════════════════════════
+def _ai_config() -> dict:
+    """Kenar çubuğu ayarlarından (globaller) AI graph yapılandırmasını üretir."""
+    return {
+        **DEFAULT_CONFIG,
+        "llm_provider": "openai",
+        "deep_think_llm": deep_model,
+        "quick_think_llm": quick_model,
+        "max_debate_rounds": _DEPTH[depth_label],
+        "max_risk_discuss_rounds": _DEPTH[depth_label],
+        "output_language": language,
+    }
+
+
+def _ai_selected(ticker: str) -> list[str]:
+    """Seçili analistler + BIST (.IS) için otomatik makro/jeopolitik analist."""
+    selected = [_ANALYSTS[l] for l in analyst_labels] or list(_ANALYSTS.values())
+    if is_bist_ticker(ticker):
+        for auto_key in ("macro", "geopolitics"):
+            if auto_key not in selected:
+                selected.append(auto_key)
+    return selected
+
+
+def _ai_run_one(ticker: str, date_str: str):
+    """Tek hisse için graph kurup propagate eder → (final_state, benchmark)."""
+    config = _ai_config()
+    ta = TradingAgentsGraph(selected_analysts=_ai_selected(ticker), debug=False, config=config)
+    benchmark = ta._resolve_benchmark(ticker)
+    asset_type = "crypto" if ticker.endswith(("-USD", "-USDT", "-USDC")) else "stock"
+    final_state, _ = ta.propagate(ticker, date_str, asset_type=asset_type)
+    return final_state, benchmark
+
+
+def render_ai_basket() -> None:
+    """🧺 Sepetime özgü AI analizi — portföyden seç, toplu çok-ajan analizi.
+
+    Tekli AI akışından bağımsız; aynı ekranın altında durur. Her seçili hisse
+    ayrı bir çok-ajan koşusudur (kredi + süre harcar). Sonuçlar opsiyonel olarak
+    ``ai_runs`` tablosuna yazılır.
+    """
+    st.subheader("🧺 Sepetime özgü AI analizi")
+    st.caption("Portföyündeki hisseleri seç, hepsine birden çok-ajan AI analizi "
+               "çalıştır. Her hisse ayrı koşu → kredi/süre harcar.")
+
+    if not is_configured():
+        st.info("Supabase bağlı değil — sepet portföyden beslenir. 💼 Portföyüm'ü "
+                "bağlayınca burada hisselerini seçebilirsin. (Tekli analiz yukarıda çalışır.)")
+        return
+    try:
+        holdings = portfolio.list_holdings()
+    except SupabaseError as e:
+        st.error(f"Portföy okunamadı: {e}")
+        return
+    tickers = sorted({h["ticker"].upper() for h in holdings})
+    if not tickers:
+        st.info("Portföyün boş. 💼 Portföyüm ekranından hisse ekle, sonra burada seç.")
+        return
+
+    sel = st.multiselect("Sepetten hisse seç", tickers,
+                         format_func=lambda t: t.replace(".IS", ""))
+    b1, b2 = st.columns([1, 2])
+    with b1:
+        basket_date = st.date_input("Analiz tarihi", value=_last_weekday(),
+                                    key="basket_date")
+    with b2:
+        st.write(""); st.write("")
+        go = st.button("🚀 Sepeti AI ile analiz et", type="primary",
+                       disabled=not sel, use_container_width=True, key="basket_run")
+    if sel:
+        st.caption(f"{len(sel)} hisse seçili · her biri birkaç dakika + OpenAI kredisi.")
+    if not go:
+        return
+    if not os.environ.get("OPENAI_API_KEY"):
+        st.error("OpenAI API anahtarı yok. Kenar çubuğundan gir ya da .env'e ekle.")
+        return
+
+    date_str = basket_date.strftime("%Y-%m-%d")
+    results = []
+    for tk in sel:
+        with st.status(f"**{tk}** analiz ediliyor…", expanded=False) as status:
+            try:
+                final_state, benchmark = _ai_run_one(tk, date_str)
+                status.update(label=f"{tk} tamamlandı ✓", state="complete")
+            except Exception as e:  # noqa: BLE001
+                status.update(label=f"{tk} — hata", state="error")
+                st.error(f"{tk}: {type(e).__name__}: {e}")
+                continue
+        rating = parse_rating(final_state.get("final_trade_decision", ""))
+        results.append((tk, rating, final_state, benchmark, date_str))
+        try:  # opsiyonel kalıcılık — başarısızlık analizi engellemesin
+            SupabaseREST().insert("ai_runs", {
+                "ticker": tk, "rating": rating, "language": language,
+                "report_md": _build_report_markdown(final_state, tk, date_str),
+                "meta": {"benchmark": benchmark, "source": "basket"},
+            })
+        except SupabaseError:
+            pass
+
+    if not results:
+        return
+    st.markdown("##### Sepet özeti")
+    st.dataframe(pd.DataFrame([{
+        "Hisse": tk.replace(".IS", ""),
+        "Karar": _RATING_STYLE.get(r, ("", "", r))[2],
+        "Rating": r,
+    } for tk, r, *_ in results]), use_container_width=True, hide_index=True)
+
+    for tk, r, state, benchmark, dstr in results:
+        color, emoji, tr = _RATING_STYLE.get(r, ("#6b7280", "⚪", r))
+        with st.expander(f"{emoji} {tk.replace('.IS', '')} — {r} ({tr})"):
+            st.download_button("📥 Rapor (.md)",
+                               _build_report_markdown(state, tk, dstr),
+                               file_name=f"{tk}_{dstr}_analiz.md",
+                               mime="text/markdown", key=f"dl_basket_{tk}")
+            st.markdown(state.get("final_trade_decision") or "_(boş)_")
+
+
 def render_ai_screen():
     st.title("📈 BIST TradingAgents — AI Analizi")
     st.caption("Borsa İstanbul hisseleri için çok-ajanlı yapay zeka analizi · "
@@ -148,11 +266,17 @@ def render_ai_screen():
         st.write(""); st.write("")
         run = st.button("🚀 Analiz Et", type="primary", use_container_width=True)
 
-    if not run:
+    if run:
+        _do_single_run(ticker, trade_date)
+    else:
         st.info("Soldan ayarları seç, bir hisse kodu (örn. **THYAO.IS**) ve tarih gir, "
                 "**Analiz Et**'e bas. İlk çalıştırma birkaç dakika sürebilir.")
-        return
 
+    st.divider()
+    render_ai_basket()
+
+
+def _do_single_run(ticker, trade_date):
     if not os.environ.get("OPENAI_API_KEY"):
         st.error("OpenAI API anahtarı yok. Kenar çubuğundan gir ya da .env'e ekle.")
         return
