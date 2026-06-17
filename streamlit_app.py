@@ -39,6 +39,7 @@ from app_pages import (
     gold_fx_page,
     ml_page,
     portfolio_page,
+    scanner_page,
     seasonality_page,
     technical,
 )
@@ -96,9 +97,10 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    mode = st.radio("Ekran", ["💼 Portföyüm", "🤖 AI Analizi", "🎯 Birleşik Karar",
-                              "🧰 Teknik Analiz", "🧾 Temel Skor", "🔮 ML Sinyal",
-                              "📐 Dip-Al Stratejisi", "📅 Sezonsallık", "🥇 Altın & Döviz"])
+    mode = st.radio("Ekran", ["💼 Portföyüm", "📡 BIST 30 Tarayıcı", "🤖 AI Analizi",
+                              "🎯 Birleşik Karar", "🧰 Teknik Analiz", "🧾 Temel Skor",
+                              "🔮 ML Sinyal", "📐 Dip-Al Stratejisi", "📅 Sezonsallık",
+                              "🥇 Altın & Döviz"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
     if mode == "🤖 AI Analizi":
@@ -388,6 +390,8 @@ def render_scanner():
 # ── Yönlendirme ─────────────────────────────────────────────────────────────
 if mode == "💼 Portföyüm":
     portfolio_page.render()
+elif mode == "📡 BIST 30 Tarayıcı":
+    scanner_page.render()
 elif mode == "🤖 AI Analizi":
     render_ai_screen()
 elif mode == "🎯 Birleşik Karar":

@@ -18,6 +18,13 @@ import pandas as pd
 import streamlit as st
 
 from app_pages._charts import candlestick_chart
+from app_pages._styles import (
+    AGREE_BADGE,
+    DECISION_STYLE,
+    STATUS_BADGE,
+    agree_level_of,
+    pnl_text,
+)
 from tradingagents.analysis import run as analysis_run
 from tradingagents.analysis import trust
 from tradingagents.analytics.combined import combined_signal
@@ -26,33 +33,9 @@ from tradingagents.storage import portfolio, snapshots
 from tradingagents.storage.prices import latest_prices
 from tradingagents.storage.supabase_client import SupabaseError, is_configured
 
-_DECISION_STYLE = {
-    "GÜÇLÜ AL": ("#15803d", "🟢"),
-    "AL": ("#16a34a", "🟢"),
-    "TUT": ("#6b7280", "⚪"),
-    "SAT": ("#dc2626", "🔴"),
-    "KAÇIN": ("#991b1b", "🔴"),
-    "VERİ YOK": ("#9ca3af", "⚠️"),
-}
-_AGREE_BADGE = {
-    "güçlü": "🟢 güçlü mutabakat",
-    "kısmi": "🟡 kısmi mutabakat",
-    "çelişki": "🔴 çelişki",
-    "nötr": "⚪ nötr",
-}
-_STATUS_BADGE = {"AL": "🟢 AL", "SAT": "🔴 SAT", "NÖTR": "⚪ Nötr"}
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_prices(tickers: tuple[str, ...]) -> dict[str, float]:
     return latest_prices(list(tickers))
-
-
-def _pnl_text(pnl_pct: float | None) -> str:
-    if pnl_pct is None:
-        return "—"
-    arrow = "🟢 +" if pnl_pct >= 0 else "🔴 "
-    return f"{arrow}{pnl_pct:.2f}%"
 
 
 def _config_warning() -> None:
@@ -108,10 +91,10 @@ def _add_form() -> None:
             st.warning(f"Analiz yapıldı ama snapshot yazılamadı: {e}")
 
     if outcome.ok:
-        color, emoji = _DECISION_STYLE.get(outcome.decision, ("#6b7280", "⚪"))
+        color, emoji = DECISION_STYLE.get(outcome.decision, ("#6b7280", "⚪"))
         st.success(
             f"**{ticker}** eklendi · {emoji} **{outcome.decision}** "
-            f"({outcome.combined_score:.0f}/100) · {_AGREE_BADGE.get(outcome.agreement_level, '')}"
+            f"({outcome.combined_score:.0f}/100) · {AGREE_BADGE.get(outcome.agreement_level, '')}"
         )
     else:
         st.success(f"**{ticker}** eklendi.")
@@ -125,7 +108,7 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
     rows = []
     for p in positions:
         snap = snaps.get(p.ticker, {})
-        agree = (snap.get("agreement") or "").split(":", 1)[0].strip()
+        agree = agree_level_of(snap)
         rows.append({
             "Hisse": p.ticker.replace(".IS", ""),
             "Adet": p.quantity,
@@ -133,11 +116,11 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
             "Son Fiyat": p.last_price if p.last_price is not None else "—",
             "Değer (TRY)": p.market_value if p.market_value is not None else "—",
             "P&L (TRY)": round(p.pnl, 2) if p.pnl is not None else "—",
-            "P&L %": _pnl_text(p.pnl_pct),
+            "P&L %": pnl_text(p.pnl_pct),
             "Ağırlık %": p.weight_pct if p.weight_pct is not None else "—",
-            "Durum": _STATUS_BADGE.get(snap.get("status"), "—"),
+            "Durum": STATUS_BADGE.get(snap.get("status"), "—"),
             "Karar": snap.get("decision", "—"),
-            "Mutabakat": _AGREE_BADGE.get(agree, "—"),
+            "Mutabakat": AGREE_BADGE.get(agree, "—"),
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -200,7 +183,7 @@ def _detail_view(tickers: list[str]) -> None:
 
     comb = combined_signal(sel, df=df)
     if comb.ok:
-        color, emoji = _DECISION_STYLE.get(comb.decision, ("#6b7280", "⚪"))
+        color, emoji = DECISION_STYLE.get(comb.decision, ("#6b7280", "⚪"))
         st.markdown(
             f"<div style='padding:12px 16px;border-radius:10px;background:{color}1a;"
             f"border:2px solid {color};'>"
