@@ -28,7 +28,7 @@ from app_pages._styles import (
 from tradingagents.analysis import run as analysis_run
 from tradingagents.analysis import trust
 from tradingagents.analytics.combined import combined_signal
-from tradingagents.analytics.composite import _fetch_daily
+from tradingagents.analytics.composite import WEIGHTS, _fetch_daily
 from tradingagents.storage import portfolio, snapshots
 from tradingagents.storage.prices import latest_prices
 from tradingagents.storage.supabase_client import SupabaseError, is_configured
@@ -164,6 +164,75 @@ def _manage_lots(holdings: list[dict]) -> None:
                     st.error(f"Silinemedi: {e}")
 
 
+# ── Karar kırılımı (teknik bileşenler + temel rasyolar) ──────────────────────
+_COMPONENT_TR = {
+    "trend": "Trend (SMA hiyerarşisi)",
+    "momentum": "Momentum (RSI/MACD/Stokastik)",
+    "pattern": "Grafik formasyonları",
+    "money_flow": "Para giriş-çıkışı (hacim)",
+    "dip": "Dip-Al stratejisi",
+    "candle": "Mum formasyonları",
+    "sr": "Destek/Direnç konumu",
+    "seasonality": "Sezonsallık",
+}
+
+
+def _factor_breakdown(comb) -> None:
+    """Birleşik kararın altındaki tüm faktörleri tek tek gösterir (şeffaflık/güven)."""
+    tech, fund = comb.technical, comb.fundamental
+    t1, t2 = st.columns(2)
+    with t1:
+        with st.expander("🧰 Teknik bileşenler (kompozit skor kırılımı)"):
+            if tech is None:
+                st.caption("Teknik veri yok.")
+            else:
+                st.dataframe(pd.DataFrame([{
+                    "Bileşen": _COMPONENT_TR.get(k, k),
+                    "Ağırlık": WEIGHTS[k],
+                    "Skor [-1,+1]": round(tech.components.get(k, 0.0), 2),
+                    "Açıklama": tech.details.get(k, ""),
+                } for k in WEIGHTS]), use_container_width=True, hide_index=True)
+                if tech.regime is not None:
+                    st.caption(f"🌡️ Rejim: {tech.regime.summary}")
+                    if getattr(tech.regime, "try_note", None):
+                        st.caption(f"💵 {tech.regime.try_note}")
+                for w in (tech.warnings or []):
+                    st.caption(f"⚠️ {w}")
+                if tech.candles:
+                    st.markdown("**🕯️ Mum formasyonları (son barlar)**")
+                    st.dataframe(pd.DataFrame([{
+                        "Tarih": h.date, "Formasyon": h.name, "Yön": h.direction,
+                        "Güç": "★" * h.strength,
+                    } for h in tech.candles]), use_container_width=True, hide_index=True)
+                if tech.patterns:
+                    st.markdown("**📐 Grafik formasyonları**")
+                    st.dataframe(pd.DataFrame([{
+                        "Formasyon": h.name, "Yön": h.direction,
+                        "Durum": "✅ teyitli" if h.confirmed else "⏳ oluşum",
+                    } for h in tech.patterns]), use_container_width=True, hide_index=True)
+                if tech.supports or tech.resistances:
+                    st.markdown("**🧱 Destek / Direnç**")
+                    st.dataframe(pd.DataFrame(
+                        [{"Seviye": lv.price, "Tip": "🟢 destek"} for lv in tech.supports]
+                        + [{"Seviye": lv.price, "Tip": "🔴 direnç"} for lv in tech.resistances]
+                    ), use_container_width=True, hide_index=True)
+    with t2:
+        with st.expander("🧾 Temel rasyolar (karar kırılımı)"):
+            criteria = getattr(fund, "criteria", None) if fund else None
+            if not criteria:
+                st.caption("Temel veri yok.")
+            else:
+                st.dataframe(pd.DataFrame([{
+                    "Rasyo": c.name,
+                    "Değer": round(c.value, 2) if c.value is not None else "—",
+                    "Bant": c.band,
+                    "Skor [0-1]": round(c.score, 2),
+                    "Ağırlık": c.weight,
+                } for c in criteria]), use_container_width=True, hide_index=True)
+                if getattr(fund, "is_financial", False):
+                    st.caption("ℹ️ Banka/sigorta için uyarlanmış kriter seti (PD/DD ağırlıklı).")
+
+
 # ── Detay (mum grafiği + güven) ──────────────────────────────────────────────
 def _detail_view(tickers: list[str]) -> None:
     st.markdown("##### 🔍 Hisse detayı")
@@ -194,6 +263,7 @@ def _detail_view(tickers: list[str]) -> None:
         with st.expander("Gerekçe (şeffaflık)"):
             for r in comb.rationale:
                 st.markdown(f"- {r}")
+        _factor_breakdown(comb)
 
     # Güven: geçmişten istikrar + sinyal karnesi
     try:
