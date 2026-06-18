@@ -77,6 +77,21 @@ create table if not exists watchlist (
     created_at timestamptz not null default now()
 );
 
+-- ── Gecelik model önbelleği (Faz H) ──────────────────────────────────────
+-- Ağır hesaplar (kalibre yukarı-olasılığı, DSR) gecelik bir GitHub Actions
+-- işiyle burada üretilir; saatlik iş bunu okuyup güven skoruna katar → saatlik
+-- hafif kalır. Her ticker için tek satır (upsert).
+create table if not exists model_cache (
+    ticker       text        primary key,
+    p_up         numeric,
+    brier        numeric,
+    auc          numeric,
+    dsr          numeric,
+    horizon      int,
+    n_samples    int,
+    updated_at   timestamptz not null default now()
+);
+
 -- ════════════════════════════════════════════════════════════════════════
 -- Güvenlik (RLS) — tek kullanıcılı kurulum
 -- ────────────────────────────────────────────────────────────────────────
@@ -91,6 +106,7 @@ alter table holdings           enable row level security;
 alter table analysis_snapshots enable row level security;
 alter table ai_runs            enable row level security;
 alter table watchlist          enable row level security;
+alter table model_cache        enable row level security;
 
 -- ════════════════════════════════════════════════════════════════════════
 -- Saklama (retention) — Supabase free tier 500 MB; saatlik satırlar birikir.

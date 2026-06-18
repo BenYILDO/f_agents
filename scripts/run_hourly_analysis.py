@@ -54,15 +54,18 @@ def _portfolio_tickers() -> list[str]:
     return sorted({h["ticker"].upper() for h in holdings})
 
 
-def _run_scope(scope: str, tickers: list[str], source: str) -> tuple[int, int]:
+def _run_scope(scope: str, tickers: list[str], source: str,
+               regime_state=None, model_cache=None) -> tuple[int, int]:
     """Bir evreni analiz edip snapshot'ları yazar. (yazılan, AL_sinyali) döndürür."""
     if not tickers:
         print(f"  [{scope}] hisse yok, atlandı.", flush=True)
         return 0, 0
+    model_cache = model_cache or {}
     print(f"  [{scope}] {len(tickers)} hisse analiz ediliyor…", flush=True)
     rows, buys = [], 0
     for tk in tickers:
-        outcome = analysis_run.analyze_ticker(tk)
+        p_up = (model_cache.get(tk) or {}).get("p_up")
+        outcome = analysis_run.analyze_ticker(tk, regime_state=regime_state, p_up=p_up)
         rows.append(analysis_run.to_snapshot_row(outcome, scope=scope, source=source))
         flag = ""
         if outcome.ok and outcome.status == "AL":
@@ -70,8 +73,9 @@ def _run_scope(scope: str, tickers: list[str], source: str) -> tuple[int, int]:
             flag = "  🟢 AL"
         elif not outcome.ok:
             flag = f"  ⚠️ {outcome.error}"
-        print(f"    {tk:<12} {outcome.decision:<10} "
-              f"({outcome.agreement_level}){flag}", flush=True)
+        gate = f" güven {outcome.confidence_score:.0f}" if outcome.confidence_score is not None else ""
+        print(f"    {tk:<12} {outcome.gated_decision or outcome.decision:<10} "
+              f"({outcome.agreement_level}{gate}){flag}", flush=True)
     try:
         snapshots.write_snapshots(rows)
     except SupabaseError as exc:
@@ -98,13 +102,27 @@ def main() -> int:
               "— atlanıyor. Kurulum: docs/SUPABASE_SETUP.md", flush=True)
         return 0
 
+    # Faz H: rejimi bir kez hesapla + gecelik model önbelleğini oku (varsa)
+    regime_state = analysis_run.index_regime()
+    if regime_state is not None:
+        print(f"  Piyasa rejimi: {regime_state.trend} · vol {regime_state.vol_regime}", flush=True)
+    try:
+        from tradingagents.storage import model_cache as _mc
+        models = _mc.read_models()
+        if models:
+            print(f"  Gecelik model önbelleği: {len(models)} hisse", flush=True)
+    except Exception:  # noqa: BLE001
+        models = {}
+
     total_written = 0
     if args.scope in ("all", "portfolio"):
-        written, buys = _run_scope("portfolio", _portfolio_tickers(), source="cron")
+        written, buys = _run_scope("portfolio", _portfolio_tickers(), source="cron",
+                                   regime_state=regime_state, model_cache=models)
         total_written += written
         print(f"  [portfolio] {written} snapshot, {buys} AL sinyali", flush=True)
     if args.scope in ("all", "bist30"):
-        written, buys = _run_scope("bist30", _bist30_universe(), source="cron")
+        written, buys = _run_scope("bist30", _bist30_universe(), source="cron",
+                                   regime_state=regime_state, model_cache=models)
         total_written += written
         print(f"  [bist30] {written} snapshot, {buys} AL sinyali", flush=True)
 

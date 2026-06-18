@@ -101,15 +101,17 @@ def _rows_to_df(rows: list[dict], sort_by_z: bool = False) -> pd.DataFrame:
     for r in ordered:
         ratio = r.get("ratio_verdict") or "—"
         rscore = r.get("ratio_score")
+        conf = (r.get("signals") or {}).get("confidence") or {}
+        score = conf.get("score")
         out.append({
             "Hisse": r["ticker"].replace(".IS", ""),
             "Kesitsel z": round(zmap[r["ticker"]], 2) if r["ticker"] in zmap else "—",
             "Durum": STATUS_BADGE.get(r.get("status"), "—"),
-            "Karar": r.get("decision", "—"),
+            "Karar (v3)": conf.get("gated") or r.get("decision", "—"),
+            "Güven": f"{score:.0f} · {conf.get('grade','')}" if score is not None else "—",
             "Birleşik": round(r["combined_score"], 0) if r.get("combined_score") is not None else "—",
             "Rasyo": f"{ratio} ({rscore:.0f})" if rscore is not None else ratio,
             "Mutabakat": AGREE_BADGE.get(agree_level_of(r), "—"),
-            "Güven": r.get("confidence") or "—",
             "Fiyat (TRY)": r.get("close") if r.get("close") is not None else "—",
             "Güncellenme": _age_text(r.get("ts")),
         })

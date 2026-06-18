@@ -123,7 +123,8 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
     rows = []
     for p in positions:
         snap = snaps.get(p.ticker, {})
-        agree = agree_level_of(snap)
+        conf = (snap.get("signals") or {}).get("confidence") or {}
+        score = conf.get("score")
         rows.append({
             "Hisse": p.ticker.replace(".IS", ""),
             "Adet": p.quantity,
@@ -134,8 +135,8 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
             "P&L %": pnl_text(p.pnl_pct),
             "Ağırlık %": p.weight_pct if p.weight_pct is not None else "—",
             "Durum": STATUS_BADGE.get(snap.get("status"), "—"),
-            "Karar": snap.get("decision", "—"),
-            "Mutabakat": AGREE_BADGE.get(agree, "—"),
+            "Karar (v3)": conf.get("gated") or snap.get("decision", "—"),
+            "Güven": f"{score:.0f} · {conf.get('grade','')}" if score is not None else "—",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 

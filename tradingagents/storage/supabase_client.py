@@ -131,6 +131,20 @@ class SupabaseREST:
         self._raise_for_status(resp)
         return resp.json()
 
+    def upsert(self, table: str, rows: dict | Iterable[dict],
+               on_conflict: str = "ticker") -> list[dict]:
+        """POST /<table> — çakışmada birleştir (upsert). ``on_conflict`` = anahtar kolon."""
+        payload = [rows] if isinstance(rows, dict) else list(rows)
+        resp = requests.post(
+            f"{self._base}/{table}",
+            headers=self._headers({"Prefer": "resolution=merge-duplicates,return=representation"}),
+            params={"on_conflict": on_conflict},
+            json=payload,
+            timeout=self.timeout,
+        )
+        self._raise_for_status(resp)
+        return resp.json()
+
     def update(self, table: str, values: dict, match: dict[str, Any]) -> list[dict]:
         """PATCH /<table> — ``match`` (eq filtreleri) ile eşleşen satırları günceller."""
         params = {col: f"eq.{val}" for col, val in match.items()}

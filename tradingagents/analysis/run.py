@@ -21,11 +21,16 @@ from typing import Optional
 import pandas as pd
 
 from tradingagents.analysis import trust
+from tradingagents.analysis.confidence import unified_confidence
+from tradingagents.analytics.backtest import daily_strategy_returns
 from tradingagents.analytics.combined import combined_signal
 from tradingagents.analytics.composite import _fetch_daily
 from tradingagents.analytics.confirmation import compute_confirmation
+from tradingagents.analytics.persistence import classify_behavior
 from tradingagents.analytics.risk import compute_risk
+from tradingagents.analytics.significance import deflated_sharpe_ratio
 from tradingagents.strategy.dip_signal import analyze as dip_analyze
+from tradingagents.strategy.dip_signal import compute_signals
 
 _STATUS_FROM_DIP = {"AL BÖLGESİ": "AL", "SAT UYARISI": "SAT"}
 _RATIO_DIR = {"AL": trust.UP, "SAT": trust.DOWN, "TUT": trust.FLAT}
@@ -60,6 +65,13 @@ class AnalysisOutcome:
     confidence: str = ""
     agreement_level: str = "nötr"
     agreement: str = ""
+    # Faz H — birleşik güven + kapılı karar
+    confidence_score: Optional[float] = None    # 0–100
+    confidence_grade: str = ""
+    gated_decision: str = ""                      # güven kapısından geçmiş nihai karar
+    regime_trend: str = ""                        # boğa/ayı/belirsiz
+    behavior: str = ""                            # trend/reversal/rastgele
+    dsr: Optional[float] = None
     close: Optional[float] = None
     smi: Optional[float] = None
     signals: dict = field(default_factory=dict)
@@ -92,8 +104,14 @@ def analyze_ticker(
     interval_label: str = "Günlük (1g)",
     *,
     df: Optional[pd.DataFrame] = None,
+    regime_state=None,
+    p_up: Optional[float] = None,
 ) -> AnalysisOutcome:
-    """Bir hisseyi deterministik motorlarla analiz eder. Asla istisna fırlatmaz."""
+    """Bir hisseyi deterministik motorlarla analiz eder. Asla istisna fırlatmaz.
+
+    ``regime_state`` (Faz B) ve ``p_up`` (Faz A, gecelik kalibrasyon) verilirse
+    birleşik güven skoruna katılır; verilmezse onlarsız da çalışır.
+    """
     ticker = ticker.strip().upper()
     if df is None:
         df = _fetch_daily(ticker)
@@ -135,6 +153,29 @@ def analyze_ticker(
                           else trust.DOWN if conf.score <= -0.3 else trust.FLAT)
     agr_level, agr_summary = trust.agreement(votes)
 
+    # Faz H — davranış (trend/mean-rev) + Dip-Al edge'inin DSR anlamlılığı (hafif)
+    behavior = ""
+    dsr = None
+    if df is not None and len(df) >= 150:
+        try:
+            beh = classify_behavior(df["Close"].pct_change().dropna().to_numpy())
+            behavior = beh.behavior if beh.ok else ""
+            sig_df = compute_signals(df)
+            strat = daily_strategy_returns(sig_df["Close"], sig_df["buy"].astype(bool),
+                                           sig_df["sell"].astype(bool))
+            if (strat != 0).sum() > 30:
+                dsr = round(deflated_sharpe_ratio(strat, n_trials=20, sr_variance=0.5), 3)
+        except Exception:  # noqa: BLE001 — güven katmanı hiçbir zaman analizi kırmaz
+            pass
+
+    regime_trend = getattr(regime_state, "trend", "") or ""
+    vol_regime = getattr(regime_state, "vol_regime", "") or ""
+    conf_res = unified_confidence(
+        agreement_level=agr_level, decision_raw=comb.decision,
+        combined_score=comb.combined_score, regime_trend=regime_trend or None,
+        vol_regime=vol_regime or None, behavior=behavior or None, dsr=dsr, p_up=p_up,
+    )
+
     close = comb.last_close or None
     smi = None
     signals: dict = {}
@@ -160,6 +201,12 @@ def analyze_ticker(
             "stop": risk_plan.stop, "target": risk_plan.target, "rr": risk_plan.rr,
             "atr_pct": risk_plan.atr_pct, "liquidity": risk_plan.liquidity,
         }
+    signals["confidence"] = {
+        "score": conf_res.score, "grade": conf_res.grade,
+        "gated": conf_res.decision, "gate_passed": conf_res.gate_passed,
+        "regime": regime_trend, "behavior": behavior, "dsr": dsr,
+        "p_up": p_up,
+    }
 
     return AnalysisOutcome(
         ticker=ticker,
@@ -173,6 +220,12 @@ def analyze_ticker(
         confidence=confidence,
         agreement_level=agr_level,
         agreement=agr_summary,
+        confidence_score=conf_res.score,
+        confidence_grade=conf_res.grade,
+        gated_decision=conf_res.decision,
+        regime_trend=regime_trend,
+        behavior=behavior,
+        dsr=dsr,
         close=round(close, 4) if close else None,
         smi=smi,
         signals=signals,
@@ -205,10 +258,34 @@ def to_snapshot_row(
     }
 
 
+def index_regime(index_ticker: str = "XU100.IS"):
+    """Endeks rejimini (boğa/ayı + vol) bir kez hesaplar. Hata → None."""
+    try:
+        from tradingagents.analytics.regime_hmm import detect_regime
+        idx = _fetch_daily(index_ticker)
+        if idx is None or idx.empty:
+            return None
+        st = detect_regime(idx["Close"].pct_change().dropna().to_numpy())
+        return st if st.ok else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def analyze_universe(
-    tickers: list[str], interval_label: str = "Günlük (1g)"
+    tickers: list[str],
+    interval_label: str = "Günlük (1g)",
+    *,
+    regime_state=None,
+    model_cache: dict | None = None,
 ) -> list[AnalysisOutcome]:
-    """Bir hisse listesini sırayla analiz eder (cron/tarama için)."""
+    """Bir hisse listesini analiz eder; rejimi bir kez hesaplar (cron/tarama için).
+
+    ``model_cache`` (ticker→{p_up}) verilirse (gecelik precompute) kalibre olasılık
+    güven skoruna katılır.
+    """
+    if regime_state is None:
+        regime_state = index_regime()
+    model_cache = model_cache or {}
     seen: set[str] = set()
     outcomes: list[AnalysisOutcome] = []
     for raw in tickers:
@@ -216,5 +293,7 @@ def analyze_universe(
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
-        outcomes.append(analyze_ticker(ticker, interval_label))
+        p_up = (model_cache.get(ticker) or {}).get("p_up")
+        outcomes.append(analyze_ticker(ticker, interval_label,
+                                       regime_state=regime_state, p_up=p_up))
     return outcomes

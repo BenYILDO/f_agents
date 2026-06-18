@@ -1,0 +1,8 @@
+# Gecelik model işi (Faz H) — kalibre olasılık için scikit-learn gerekir.
+numpy>=1.26.0
+pandas>=2.3.0
+requests>=2.32.4
+yfinance>=1.4.1
+scikit-learn>=1.4.0
+python-dotenv>=1.0.0
+certifi>=2024.0.0

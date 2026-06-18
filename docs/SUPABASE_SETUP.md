@@ -77,6 +77,17 @@ Workflow (`.github/workflows/hourly-analysis.yml`) saat başı çalışıp
 > Not: GitHub Actions cron'u yoğunlukta birkaç dakika gecikebilir ve repo 60 gün
 > hareketsiz kalırsa zamanlanmış işler durur — repo aktifken sorun olmaz.
 
+## 7) Gecelik model işi (Faz H — opsiyonel ama önerilir)
+
+`.github/workflows/nightly-models.yml` günde bir kez (kapanış sonrası) **kalibre
+yukarı-olasılığını** (ağır 5-kat GBDT) hesaplayıp Supabase `model_cache` tablosuna
+yazar; saatlik iş bunu okuyup **güven skoruna** katar — böylece saatlik cron ağır
+ML çalıştırmaz. Aynı `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` secret'larını kullanır.
+
+Bu özellik için **`schema.sql`'i tekrar çalıştır** (idempotent; `model_cache`
+tablosunu ekler). Gecelik iş çalışmasa bile saatlik analiz ve güven skoru
+(kalibre olasılık olmadan) sorunsuz çalışır.
+
 ---
 
 ## Sorun giderme
