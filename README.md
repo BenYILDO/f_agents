@@ -55,6 +55,17 @@ saatlik analiz **GitHub Actions** cron'u ile üretilir — VPS gerekmez.
   teyit katmanı (RSI/MACD divergence + hacim + XU100'e göreceli güç), **çoklu zaman
   dilimi teyidi** (haftalık/günlük/4s konfluens) ve **geçmiş backtest** (ileri getiri
   dağılımı + kazanma oranı/CAGR/max düşüş/Sharpe). Hisse detayında görünür.
+- **Güven v3 (istatistiksel/akademik)** — makalelere dayalı, deterministik motorlar
+  (`tradingagents/analytics/`): **Deflated/Probabilistic Sharpe + blok-bootstrap**
+  (data-snooping farkında anlamlılık), **kalibre yukarı-olasılığı** (isotonic + Brier),
+  **rejim tespiti** (2-durumlu Gauss HMM + EWMA/GARCH-lite vol), **trend↔mean-reversion**
+  ayrımı (Lo-MacKinlay variance ratio + Hurst), **kesitsel z-skor sıralama**, **½-Kelly
+  × volatilite hedefleme** pozisyon boyutu, **PBO/purged-CV** backtest doğruluğu ve
+  **BIST seans/tatil takvimi** (açık/kapalı + veri bayatlığı). Kaynaklar aşağıda.
+
+  > Akademik temel: Lo-Mamaysky-Wang (2000), Sullivan-Timmermann-White (1999),
+  > Moskowitz-Ooi-Pedersen (2012), Hamilton (1989), Moreira-Muir (2017),
+  > Harvey-Liu-Zhu (2016), Bailey & López de Prado (DSR/PBO), Lou-Polk-Skouras (2019).
 
 Kurulum (Supabase projesi → `tradingagents/storage/schema.sql` → Streamlit/Actions
 secrets → deploy): **[docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)**. Saatlik iş
