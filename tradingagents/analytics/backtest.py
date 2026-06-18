@@ -97,6 +97,28 @@ def _strategy_metrics(close: pd.Series, entries: pd.Series, exits: pd.Series,
     }
 
 
+def daily_strategy_returns(close: pd.Series, entries: pd.Series, exits: pd.Series,
+                           max_hold: int = 40) -> np.ndarray:
+    """Sinyali takip eden uzun-only stratejinin günlük getiri serisi (anlamlılık için)."""
+    c = np.asarray(close, dtype=float)
+    en = np.asarray(entries.reindex(close.index).fillna(False).astype(bool))
+    ex = np.asarray(exits.reindex(close.index).fillna(False).astype(bool))
+    n = len(c)
+    position = np.zeros(n)
+    in_pos, entry_i = False, 0
+    for i in range(n):
+        if in_pos:
+            position[i] = 1.0
+            if ex[i] or (i - entry_i) >= max_hold or i == n - 1:
+                in_pos = False
+        elif en[i] and i < n - 1:
+            in_pos, entry_i = True, i
+    daily = pd.Series(c, index=close.index).pct_change().fillna(0).to_numpy()
+    sr = np.roll(position, 1) * daily
+    sr[0] = 0.0
+    return sr
+
+
 def signal_edge(close: pd.Series, entries: pd.Series, exits: pd.Series,
                 horizons=(5, 10, 20)) -> EdgeResult:
     """İleri getiri dağılımı + strateji metrikleri (saf)."""

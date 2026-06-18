@@ -26,6 +26,7 @@ from app_pages._styles import (
 )
 from tradingagents.analysis import run as analysis_run
 from tradingagents.analysis import trust
+from tradingagents.analytics.cross_section import cross_sectional_score
 from tradingagents.storage import snapshots
 from tradingagents.storage.supabase_client import SupabaseError, is_configured
 from tradingagents.strategy.dip_signal import BIST30
@@ -72,14 +73,37 @@ def _scan_now(universe: list[str]) -> list[dict]:
     return rows
 
 
-def _rows_to_df(rows: list[dict]) -> pd.DataFrame:
+def _zscore_map(rows: list[dict]) -> dict[str, float]:
+    """Evren için kesitsel birleşik z-skor (Faz D) — ticker→z."""
+    if len(rows) < 3:
+        return {}
+    met = pd.DataFrame(
+        [{"combined_score": r.get("combined_score"), "ratio_score": r.get("ratio_score"),
+          "tech_score": r.get("tech_score")} for r in rows],
+        index=[r["ticker"] for r in rows],
+    )
+    try:
+        ranked = cross_sectional_score(
+            met, {"combined_score": 1.0, "ratio_score": 1.0, "tech_score": 1.0})
+        return ranked["composite_z"].to_dict()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _rows_to_df(rows: list[dict], sort_by_z: bool = False) -> pd.DataFrame:
+    zmap = _zscore_map(rows)
+    if sort_by_z and zmap:
+        ordered = sorted(rows, key=lambda x: -zmap.get(x["ticker"], -99))
+    else:
+        ordered = sorted(rows, key=lambda x: (decision_rank(x.get("decision")),
+                                              -(x.get("combined_score") or 0)))
     out = []
-    for r in sorted(rows, key=lambda x: (decision_rank(x.get("decision")),
-                                         -(x.get("combined_score") or 0))):
+    for r in ordered:
         ratio = r.get("ratio_verdict") or "—"
         rscore = r.get("ratio_score")
         out.append({
             "Hisse": r["ticker"].replace(".IS", ""),
+            "Kesitsel z": round(zmap[r["ticker"]], 2) if r["ticker"] in zmap else "—",
             "Durum": STATUS_BADGE.get(r.get("status"), "—"),
             "Karar": r.get("decision", "—"),
             "Birleşik": round(r["combined_score"], 0) if r.get("combined_score") is not None else "—",
@@ -96,6 +120,10 @@ def render() -> None:
     st.title("📡 BIST 30 Tarayıcı")
     st.caption("Rasyo + teknik birleşik AL/SAT sinyalleri · saat başı otomatik "
                "güncellenir · Yatırım tavsiyesi değildir.")
+
+    from tradingagents.analytics import market_calendar as mcal
+    ms = mcal.market_status()
+    st.caption(f"{'🟢' if ms.open else '🔴'} **BIST {ms.status}** — {ms.detail}")
 
     universe = _universe()
     c1, c2, c3 = st.columns([1.4, 1, 1])
@@ -153,6 +181,10 @@ def render() -> None:
         st.caption("Filtreye uyan hisse yok.")
         return
 
-    st.dataframe(_rows_to_df(view), use_container_width=True, hide_index=True)
-    st.caption("Sıra: en boğa karardan en ayıya. 'Mutabakat' = teknik+rasyo+dip "
-               "stratejisi uyumu (güven). Çelişki → temkin.")
+    sort_z = st.toggle("📐 Kesitsel z-skora göre sırala (evreni güce göre diz)",
+                       value=False, help="Faz D: winsorize + z-skor birleşik sıralama")
+    st.dataframe(_rows_to_df(view, sort_by_z=sort_z),
+                 use_container_width=True, hide_index=True)
+    st.caption("Varsayılan sıra: en boğa karardan en ayıya. 'Kesitsel z' = evren "
+               "içinde göreli güç (yüksek=iyi). 'Mutabakat' = teknik+rasyo+dip+teyit "
+               "uyumu. Çelişki → temkin.")

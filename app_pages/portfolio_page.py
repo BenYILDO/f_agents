@@ -27,12 +27,23 @@ from app_pages._styles import (
 )
 from tradingagents.analysis import run as analysis_run
 from tradingagents.analysis import trust
-from tradingagents.analytics.backtest import edge_for_ticker
+from tradingagents.analytics.backtest import daily_strategy_returns, edge_for_ticker
 from tradingagents.analytics.combined import combined_signal
 from tradingagents.analytics.composite import WEIGHTS, _fetch_daily
 from tradingagents.analytics.confirmation import compute_confirmation
 from tradingagents.analytics.multiframe import compute_mtf
+from tradingagents.analytics.persistence import classify_behavior
+from tradingagents.analytics.probability import calibrated_probability
+from tradingagents.analytics.regime_hmm import detect_regime, ewma_vol
 from tradingagents.analytics.risk import compute_risk
+from tradingagents.analytics.significance import (
+    block_bootstrap_pvalue,
+    deflated_sharpe_ratio,
+    sharpe_ratio,
+)
+from tradingagents.analytics.sizing import position_size
+from tradingagents.analytics.validation import pbo_cscv
+from tradingagents.strategy.dip_signal import compute_signals
 from tradingagents.storage import portfolio, snapshots
 from tradingagents.storage.prices import latest_prices
 from tradingagents.storage.supabase_client import SupabaseError, is_configured
@@ -301,6 +312,77 @@ def _confidence_v2(sel: str, df) -> None:
             st.caption(edge.error or "Geçmişte bu sinyalden örnek yok.")
 
 
+def _ma_grid_perf(df):
+    """PBO için MA-kesişim konfig ızgarasının günlük getiri matrisi (T×N)."""
+    close = df["Close"]
+    daily = close.pct_change().fillna(0)
+    cols = []
+    for fast in (5, 10, 20):
+        for slow in (50, 100, 200):
+            if fast >= slow:
+                continue
+            pos = (close.rolling(fast).mean() > close.rolling(slow).mean()).astype(float)
+            cols.append((pos.shift(1).fillna(0) * daily).to_numpy())
+    return np.column_stack(cols) if cols else None
+
+
+def _stats_v3(sel: str, df) -> None:
+    """İstatistiksel güven motoru v3 — rejim, davranış, anlamlılık (inline) +
+    kalibre olasılık/boyut/PBO (talep üzerine)."""
+    st.markdown("##### 🧠 İstatistiksel Güven (v3)")
+    ret = df["Close"].pct_change().dropna().to_numpy()
+
+    # Faz B — piyasa rejimi (XU100)
+    bench = _cached_benchmark()
+    if bench is not None and not bench.empty:
+        reg = detect_regime(bench["Close"].pct_change().dropna().to_numpy())
+        if reg.ok:
+            st.caption(f"📊 Piyasa rejimi (XU100): **{reg.trend}** · {reg.note}")
+
+    # Faz C — seri davranışı (trend vs mean-reversion)
+    beh = classify_behavior(ret)
+    if beh.ok:
+        st.caption(f"🔀 Seri davranışı: **{beh.behavior}** → uygun mod: "
+                   f"**{beh.mode}** · {beh.note}")
+
+    # Faz A — Dip-Al edge'inin istatistiksel anlamlılığı
+    try:
+        sig = compute_signals(df)
+        strat = daily_strategy_returns(sig["Close"], sig["buy"].astype(bool),
+                                       sig["sell"].astype(bool))
+        if (strat != 0).sum() > 30:
+            sr = sharpe_ratio(strat)
+            dsr = deflated_sharpe_ratio(strat, n_trials=20, sr_variance=0.5)
+            pval = block_bootstrap_pvalue(strat, n_boot=400)
+            verdict = ("anlamlı ✅" if dsr > 0.9 and pval < 0.05
+                       else "zayıf/anlamsız ⚠️")
+            st.caption(f"🎲 Dip-Al edge: yıllık Sharpe **{sr:.2f}** · DSR **{dsr:.2f}** · "
+                       f"bootstrap p **{pval:.3f}** → {verdict}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Faz A/E/F — derin (ağır): kalibre olasılık + boyutlandırma + PBO
+    if st.button("🧮 Derin istatistik (kalibre olasılık + pozisyon boyutu + PBO)",
+                 key=f"v3deep_{sel}", use_container_width=True):
+        with st.spinner("Kalibre model + PBO hesaplanıyor (birkaç saniye)…"):
+            pr = calibrated_probability(sel, df)
+            pbo = pbo_cscv(_ma_grid_perf(df)) if _ma_grid_perf(df) is not None else None
+        if pr.ok:
+            st.caption(f"🎯 Kalibre yukarı olasılığı (h=10g): **%{pr.p_up*100:.0f}** "
+                       f"(Brier {pr.brier}, AUC {pr.auc}, n={pr.n_samples})")
+            rp = compute_risk(df)
+            rr = rp.rr if rp.ok and rp.rr > 0 else 1.5
+            sizing = position_size(pr.p_up, rr, ewma_vol(ret))
+            st.caption(f"📏 Önerilen pozisyon: {sizing.note}")
+        else:
+            st.caption(f"Kalibre olasılık yok: {pr.reason}")
+        if pbo and pbo.get("ok"):
+            risk_txt = ("düşük ✅" if pbo["pbo"] < 0.3
+                        else "yüksek ⚠️" if pbo["pbo"] > 0.5 else "orta")
+            st.caption(f"🧪 Backtest aşırı-uyum olasılığı (PBO): **{pbo['pbo']}** "
+                       f"({pbo['n_splits']} bölünme) → {risk_txt}")
+
+
 # ── Detay (mum grafiği + güven) ──────────────────────────────────────────────
 def _detail_view(tickers: list[str]) -> None:
     st.markdown("##### 🔍 Hisse detayı")
@@ -334,6 +416,7 @@ def _detail_view(tickers: list[str]) -> None:
         _factor_breakdown(comb)
 
     _confidence_v2(sel, df)
+    _stats_v3(sel, df)
 
     # Güven: geçmişten istikrar + sinyal karnesi
     try:
@@ -380,6 +463,10 @@ def render() -> None:
     st.title("💼 Portföyüm")
     st.caption("Elindeki hisseler · canlı kâr/zarar · saat başı otomatik analiz · "
                "Yatırım tavsiyesi değildir.")
+
+    from tradingagents.analytics import market_calendar as mcal
+    ms = mcal.market_status()
+    st.caption(f"{'🟢' if ms.open else '🔴'} **BIST {ms.status}** — {ms.detail}")
 
     if not is_configured():
         _config_warning()

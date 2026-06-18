@@ -69,18 +69,22 @@ class AnalysisOutcome:
 
 
 def _freshness(df: Optional[pd.DataFrame]) -> dict:
-    """Fiyat verisinin tazeliği — son bar yaşı (gün). Bayatsa yüksek sesle işaretle."""
+    """Fiyat tazeliği — BIST seans/tatil takvimine göre 'son bar bayat mı'."""
+    from tradingagents.analytics import market_calendar as mcal
+
+    market = mcal.market_status().status
     if df is None or df.empty:
-        return {"price": "error"}
+        return {"price": "error", "market": market}
     try:
         last_date = pd.Timestamp(df.index[-1]).date()
-        age = (datetime.now(timezone.utc).date() - last_date).days
+        stale = mcal.is_stale(last_date)
         return {
             "last_bar": last_date.isoformat(),
-            "price": "ok" if age <= 4 else f"stale ({age}g)",
+            "price": "stale" if stale else "ok",
+            "market": market,
         }
     except Exception:  # noqa: BLE001
-        return {"price": "ok"}
+        return {"price": "ok", "market": market}
 
 
 def analyze_ticker(
