@@ -27,8 +27,12 @@ from app_pages._styles import (
 )
 from tradingagents.analysis import run as analysis_run
 from tradingagents.analysis import trust
+from tradingagents.analytics.backtest import edge_for_ticker
 from tradingagents.analytics.combined import combined_signal
 from tradingagents.analytics.composite import WEIGHTS, _fetch_daily
+from tradingagents.analytics.confirmation import compute_confirmation
+from tradingagents.analytics.multiframe import compute_mtf
+from tradingagents.analytics.risk import compute_risk
 from tradingagents.storage import portfolio, snapshots
 from tradingagents.storage.prices import latest_prices
 from tradingagents.storage.supabase_client import SupabaseError, is_configured
@@ -233,6 +237,70 @@ def _factor_breakdown(comb) -> None:
                     st.caption("ℹ️ Banka/sigorta için uyarlanmış kriter seti (PD/DD ağırlıklı).")
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_benchmark():
+    return _fetch_daily("XU100.IS")
+
+
+def _confidence_v2(sel: str, df) -> None:
+    """Güven katmanı v2: risk (ATR/R-R) + teyit satır içi; MTF + backtest talep üzerine."""
+    st.markdown("##### 🛡️ Güven katmanı v2")
+
+    rp = compute_risk(df)
+    if rp.ok:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Stop (ATR×2)", f"{rp.stop:.2f}")
+        m2.metric("Hedef", f"{rp.target:.2f}")
+        m3.metric("Risk/Ödül", f"{rp.rr:.2f}")
+        m4.metric("Likidite", rp.liquidity)
+        for n in rp.notes:
+            st.caption(f"• {n}")
+
+    conf = compute_confirmation(df, benchmark_df=_cached_benchmark())
+    if conf.ok:
+        bits = []
+        if conf.rsi_divergence != "yok":
+            bits.append(f"RSI divergence: **{conf.rsi_divergence}**")
+        if conf.macd_divergence != "yok":
+            bits.append(f"MACD divergence: **{conf.macd_divergence}**")
+        bits.append(f"Hacim teyidi: {'✅' if conf.volume_confirms else '—'}")
+        bits.append(f"OBV: {conf.obv_trend}")
+        if conf.rel_strength is not None:
+            bits.append(conf.rs_note)
+        st.caption(" · ".join(bits))
+
+    col_a, col_b = st.columns(2)
+    if col_a.button("🔭 Çoklu zaman dilimi teyidi", key=f"mtf_{sel}",
+                    use_container_width=True):
+        with st.spinner("Haftalık / günlük / 4 saatlik çekiliyor…"):
+            mtf = compute_mtf(sel)
+        if mtf.ok:
+            st.info(f"**Konfluens: {mtf.confluence}** (skor {mtf.score:+.2f})")
+            for label, d in mtf.frames.items():
+                st.caption(f"• {label}: {d['detail']}")
+        else:
+            st.caption(mtf.error or "MTF hesaplanamadı.")
+    if col_b.button("🧪 Geçmiş backtest (Dip-Al)", key=f"bt_{sel}",
+                    use_container_width=True):
+        with st.spinner("Geçmiş sinyaller test ediliyor…"):
+            edge = edge_for_ticker(sel, df)
+        if edge.ok and edge.n_signals:
+            eq = edge.equity
+            st.caption(edge.note)
+            e1, e2, e3, e4 = st.columns(4)
+            e1.metric("Kazanma %", eq.get("win_rate"))
+            e2.metric("CAGR %", eq.get("cagr"))
+            e3.metric("Max düşüş %", eq.get("max_drawdown"))
+            e4.metric("Sharpe", eq.get("sharpe"))
+            st.dataframe(pd.DataFrame(
+                [{"Ufuk": h, "Örnek": v["n"], "Ort. %": v["mean"],
+                  "Medyan %": v["median"], "İsabet %": v["hit_rate"]}
+                 for h, v in edge.fwd.items()]),
+                use_container_width=True, hide_index=True)
+        else:
+            st.caption(edge.error or "Geçmişte bu sinyalden örnek yok.")
+
+
 # ── Detay (mum grafiği + güven) ──────────────────────────────────────────────
 def _detail_view(tickers: list[str]) -> None:
     st.markdown("##### 🔍 Hisse detayı")
@@ -264,6 +332,8 @@ def _detail_view(tickers: list[str]) -> None:
             for r in comb.rationale:
                 st.markdown(f"- {r}")
         _factor_breakdown(comb)
+
+    _confidence_v2(sel, df)
 
     # Güven: geçmişten istikrar + sinyal karnesi
     try:

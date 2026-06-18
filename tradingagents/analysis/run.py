@@ -23,6 +23,8 @@ import pandas as pd
 from tradingagents.analysis import trust
 from tradingagents.analytics.combined import combined_signal
 from tradingagents.analytics.composite import _fetch_daily
+from tradingagents.analytics.confirmation import compute_confirmation
+from tradingagents.analytics.risk import compute_risk
 from tradingagents.strategy.dip_signal import analyze as dip_analyze
 
 _STATUS_FROM_DIP = {"AL BÖLGESİ": "AL", "SAT UYARISI": "SAT"}
@@ -114,11 +116,19 @@ def analyze_ticker(
     ratio_verdict = comb.fundamental.verdict if ratio_ok else None
 
     dip_status_label = dip.status if dip.ok else "—"
+
+    # Teyit katmanı (divergence + hacim) — her snapshot'a girer, ayrıca 4. oy.
+    conf = compute_confirmation(df) if df is not None else None
+    risk_plan = compute_risk(df) if df is not None else None
+
     votes = {
         "teknik": _composite_dir(tech_score, tech_ok),
         "rasyo": _RATIO_DIR.get(ratio_verdict, trust.FLAT),
         "dip-strateji": _dip_dir(dip_status_label),
     }
+    if conf is not None and conf.ok:
+        votes["teyit"] = (trust.UP if conf.score >= 0.3
+                          else trust.DOWN if conf.score <= -0.3 else trust.FLAT)
     agr_level, agr_summary = trust.agreement(votes)
 
     close = comb.last_close or None
@@ -134,6 +144,17 @@ def analyze_ticker(
             "dip_status": dip.status,
             "dip_conditions": {k: bool(v) for k, v in (dip.conditions or {}).items()},
             "recent": (dip.signals or [])[-3:],
+        }
+    if conf is not None and conf.ok:
+        signals["confirmation"] = {
+            "rsi_div": conf.rsi_divergence, "macd_div": conf.macd_divergence,
+            "volume_confirms": conf.volume_confirms, "obv": conf.obv_trend,
+            "score": conf.score,
+        }
+    if risk_plan is not None and risk_plan.ok:
+        signals["risk"] = {
+            "stop": risk_plan.stop, "target": risk_plan.target, "rr": risk_plan.rr,
+            "atr_pct": risk_plan.atr_pct, "liquidity": risk_plan.liquidity,
         }
 
     return AnalysisOutcome(

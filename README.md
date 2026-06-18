@@ -48,8 +48,13 @@ saatlik analiz **GitHub Actions** cron'u ile üretilir — VPS gerekmez.
   otomatik güncellenir (tarayıcı kapalıyken de birikir) + "Şimdi tara".
 - **🤖 AI Analizi → 🧺 Sepet** — mevcut tekli çok-ajan analizine ek olarak
   portföyden seçip toplu AI analizi (yalnız elle tetiklenir; kredi harcar).
-- **Güven katmanı** — çoklu-yöntem mutabakatı (teknik+rasyo+dip), sinyal istikrarı
-  (flip-flop) ve sinyal karnesi (ileri getiri + isabet oranı) + veri tazeliği uyarıları.
+- **Güven katmanı** — çoklu-yöntem mutabakatı (teknik+rasyo+dip+teyit), sinyal
+  istikrarı (flip-flop) ve sinyal karnesi (ileri getiri + isabet oranı) + veri
+  tazeliği uyarıları.
+- **Güven v2 (teknik)** — risk-farkında plan (ATR stop/hedef + risk/ödül + likidite),
+  teyit katmanı (RSI/MACD divergence + hacim + XU100'e göreceli güç), **çoklu zaman
+  dilimi teyidi** (haftalık/günlük/4s konfluens) ve **geçmiş backtest** (ileri getiri
+  dağılımı + kazanma oranı/CAGR/max düşüş/Sharpe). Hisse detayında görünür.
 
 Kurulum (Supabase projesi → `tradingagents/storage/schema.sql` → Streamlit/Actions
 secrets → deploy): **[docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)**. Saatlik iş
