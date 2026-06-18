@@ -106,11 +106,13 @@ def analyze_ticker(
     df: Optional[pd.DataFrame] = None,
     regime_state=None,
     p_up: Optional[float] = None,
+    macro_shock: bool = False,
 ) -> AnalysisOutcome:
     """Bir hisseyi deterministik motorlarla analiz eder. Asla istisna fırlatmaz.
 
     ``regime_state`` (Faz B) ve ``p_up`` (Faz A, gecelik kalibrasyon) verilirse
-    birleşik güven skoruna katılır; verilmezse onlarsız da çalışır.
+    birleşik güven skoruna katılır; verilmezse onlarsız da çalışır. ``macro_shock``
+    (USDTRY sistemik şok) verilirse yeni alımları durduran sert kapı tetiklenir.
     """
     ticker = ticker.strip().upper()
     if df is None:
@@ -170,10 +172,12 @@ def analyze_ticker(
 
     regime_trend = getattr(regime_state, "trend", "") or ""
     vol_regime = getattr(regime_state, "vol_regime", "") or ""
+    illiquid = bool(risk_plan is not None and risk_plan.ok and risk_plan.illiquid)
     conf_res = unified_confidence(
         agreement_level=agr_level, decision_raw=comb.decision,
         combined_score=comb.combined_score, regime_trend=regime_trend or None,
         vol_regime=vol_regime or None, behavior=behavior or None, dsr=dsr, p_up=p_up,
+        illiquid=illiquid, macro_shock=macro_shock,
     )
 
     close = comb.last_close or None
@@ -200,6 +204,7 @@ def analyze_ticker(
         signals["risk"] = {
             "stop": risk_plan.stop, "target": risk_plan.target, "rr": risk_plan.rr,
             "atr_pct": risk_plan.atr_pct, "liquidity": risk_plan.liquidity,
+            "amihud": risk_plan.amihud, "illiquid": risk_plan.illiquid,
         }
     signals["confidence"] = {
         "score": conf_res.score, "grade": conf_res.grade,
@@ -271,20 +276,33 @@ def index_regime(index_ticker: str = "XU100.IS"):
         return None
 
 
+def macro_shock_state(threshold: float = 0.7) -> bool:
+    """USDTRY sistemik şok bayrağı (TL stres ≥ eşik). Bir kez hesaplanır. Hata → False."""
+    try:
+        from tradingagents.analytics.regime import fetch_try_stress
+        stress, _ = fetch_try_stress()
+        return bool(stress is not None and stress >= threshold)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def analyze_universe(
     tickers: list[str],
     interval_label: str = "Günlük (1g)",
     *,
     regime_state=None,
     model_cache: dict | None = None,
+    macro_shock: bool | None = None,
 ) -> list[AnalysisOutcome]:
-    """Bir hisse listesini analiz eder; rejimi bir kez hesaplar (cron/tarama için).
+    """Bir hisse listesini analiz eder; rejim ve makro şoku bir kez hesaplar.
 
     ``model_cache`` (ticker→{p_up}) verilirse (gecelik precompute) kalibre olasılık
-    güven skoruna katılır.
+    güven skoruna katılır. ``macro_shock`` verilmezse USDTRY'den bir kez hesaplanır.
     """
     if regime_state is None:
         regime_state = index_regime()
+    if macro_shock is None:
+        macro_shock = macro_shock_state()
     model_cache = model_cache or {}
     seen: set[str] = set()
     outcomes: list[AnalysisOutcome] = []
@@ -295,5 +313,6 @@ def analyze_universe(
         seen.add(ticker)
         p_up = (model_cache.get(ticker) or {}).get("p_up")
         outcomes.append(analyze_ticker(ticker, interval_label,
-                                       regime_state=regime_state, p_up=p_up))
+                                       regime_state=regime_state, p_up=p_up,
+                                       macro_shock=macro_shock))
     return outcomes

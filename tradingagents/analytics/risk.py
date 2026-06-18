@@ -35,6 +35,8 @@ class RiskPlan:
     rr: float = 0.0               # ödül / risk
     avg_tl_volume: float = 0.0     # ortalama günlük TL hacmi
     liquidity: str = "—"          # 'yüksek' | 'orta' | 'düşük'
+    amihud: float = 0.0            # Amihud illikidite (×1e9, yüksek = illikit)
+    illiquid: bool = False         # sert filtre: alımları engelle (kayma riski)
     notes: list = field(default_factory=list)
     error: str = ""
 
@@ -45,6 +47,24 @@ def _liquidity_label(avg_tl: float) -> str:
     if avg_tl >= _LIQ_MED:
         return "orta"
     return "düşük"
+
+
+def amihud_illiquidity(df: pd.DataFrame, lookback: int = 20) -> float:
+    """Amihud (2002) illikidite ölçütü: ortalama( |günlük getiri| / günlük TL hacmi ).
+
+    Yüksek değer = aynı fiyat hareketi için az hacim → büyük kayma (slippage)
+    riski. Okunabilirlik için ×1e9 ölçeklenir. BIST yan-tahta hisselerinde
+    alımları engellemek için ``compute_risk`` içinde sert filtreye bağlanır.
+    """
+    if df is None or df.empty or "Volume" not in df.columns or len(df) < 5:
+        return 0.0
+    sub = df.tail(lookback + 1)
+    ret = sub["Close"].pct_change().abs()
+    tl = (sub["Close"] * sub["Volume"]).replace(0, pd.NA)
+    illiq = (ret / tl).dropna()
+    if illiq.empty:
+        return 0.0
+    return float(illiq.mean() * 1e9)
 
 
 def compute_risk(
@@ -91,12 +111,18 @@ def compute_risk(
         if not tl.empty:
             avg_tl = float(tl.mean())
     liquidity = _liquidity_label(avg_tl)
-    if liquidity == "düşük":
-        notes.append("Düşük likidite — kayma/manipülasyon riski; sinyale temkinli yaklaş.")
+    amihud = amihud_illiquidity(df, vol_lookback)
+    # Sert filtre: TL hacim tabanı (BIST-kalibreli, sağlam) illikiditeyi belirler;
+    # Amihud bilgilendirme amaçlı raporlanır.
+    illiquid = liquidity == "düşük"
+    if illiquid:
+        notes.append(f"⛔ İllikit (ort. TL hacim < {_LIQ_MED/1e6:.0f}M, Amihud "
+                     f"{amihud:.2f}) — alımlar engellenir (kayma/manipülasyon riski).")
 
     return RiskPlan(
         ok=True, close=round(close, 4), atr=round(a, 4), atr_pct=round(atr_pct, 2),
         stop=round(stop, 4), target=round(target, 4),
         risk_per_share=round(risk, 4), reward_per_share=round(reward, 4),
-        rr=round(rr, 2), avg_tl_volume=round(avg_tl, 0), liquidity=liquidity, notes=notes,
+        rr=round(rr, 2), avg_tl_volume=round(avg_tl, 0), liquidity=liquidity,
+        amihud=round(amihud, 4), illiquid=illiquid, notes=notes,
     )

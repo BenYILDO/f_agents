@@ -54,9 +54,15 @@ def unified_confidence(
     behavior: str | None = None,          # 'trend'|'reversal'|'rastgele'
     dsr: float | None = None,             # Deflated Sharpe [0,1]
     p_up: float | None = None,            # kalibre yukarı olasılığı [0,1]
+    illiquid: bool = False,               # Amihud/likidite sert filtresi
+    macro_shock: bool = False,            # USDTRY sistemik şok — yeni alımı durdur
     gate_threshold: float = 45.0,
 ) -> ConfidenceResult:
-    """Kanıtları 0–100 güven skoruna + kapılı karara indirger (saf)."""
+    """Kanıtları 0–100 güven skoruna + kapılı karara indirger (saf).
+
+    ``illiquid`` ve ``macro_shock`` skordan bağımsız **sert gatekeeper**'lardır:
+    illikit hissede alım → "KAÇIN"; makro şokta (USDTRY) yeni alım → "İZLE".
+    """
     score = 50.0 + _AGREE_BASE.get(agreement_level, 0.0)
     reasons: list[str] = [f"Mutabakat: {agreement_level}"]
 
@@ -106,6 +112,18 @@ def unified_confidence(
         reasons.append(f"Kalibre olasılık %{p_up*100:.0f}")
 
     score = round(max(0.0, min(100.0, score)), 1)
+
+    # ── Sert gatekeeper'lar (skordan bağımsız, yön tahminini ezer) ──────────
+    # İllikidite: alım sinyali olsa bile kayma riski → "KAÇIN".
+    if illiquid and bullish:
+        reasons.append("⛔ İllikidite kapısı — alım engellendi (KAÇIN)")
+        return ConfidenceResult(score=min(score, 30.0), grade=_grade(min(score, 30.0)),
+                                decision="KAÇIN", gate_passed=False, reasons=reasons)
+    # Makro şok (USDTRY sistemik): yeni alımları durdur → "İZLE".
+    if macro_shock and bullish:
+        reasons.append("⛔ Makro şok (USDTRY) — yeni alım durduruldu (İZLE)")
+        return ConfidenceResult(score=min(score, 40.0), grade=_grade(min(score, 40.0)),
+                                decision="İZLE", gate_passed=False, reasons=reasons)
 
     # Kapı: düşük güven ya da güçlü karşı-trend → İZLE
     gate_passed = score >= gate_threshold and not (counter_trend and score < 60)

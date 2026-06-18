@@ -24,8 +24,13 @@ def kelly_fraction(p_win: float, win_loss_ratio: float) -> float:
     return max(0.0, f)
 
 
-def fractional_kelly(p_win: float, win_loss_ratio: float, fraction: float = 0.5) -> float:
-    """Kesirli Kelly — tam Kelly'nin ``fraction`` katı (varsayılan ½, daha güvenli)."""
+def fractional_kelly(p_win: float, win_loss_ratio: float, fraction: float = 0.25) -> float:
+    """Kesirli Kelly — tam Kelly'nin ``fraction`` katı.
+
+    Varsayılan **çeyrek Kelly (0.25)**: tam Kelly rejim değişiminde/parametre
+    hatasında iflas riski taşır; modern fonların standardı çeyrek Kelly'dir
+    (López de Prado; Thorp). Daha düşük oynaklık, kontrollü düşüş.
+    """
     return kelly_fraction(p_win, win_loss_ratio) * fraction
 
 
@@ -51,15 +56,15 @@ def position_size(
     win_loss_ratio: float,
     forecast_vol: float,
     target_vol: float = 0.15,
-    kelly_mult: float = 0.5,
+    kelly_mult: float = 0.25,
     max_weight: float = 0.20,
 ) -> SizingResult:
-    """Kesirli Kelly × vol-hedefleme → nihai pozisyon ağırlığı (sermaye payı)."""
+    """Çeyrek Kelly × vol-hedefleme → nihai pozisyon ağırlığı (sermaye payı)."""
     k = kelly_fraction(p_win, win_loss_ratio)
     kf = k * kelly_mult
     vs = vol_target_weight(forecast_vol, target_vol)
     weight = max(0.0, min(max_weight, kf * vs))
-    note = (f"Kelly={k:.2f} → ½-Kelly={kf:.2f} × vol-ölçek={vs:.2f} "
+    note = (f"Kelly={k:.2f} → çeyrek-Kelly={kf:.2f} × vol-ölçek={vs:.2f} "
             f"→ ağırlık %{weight*100:.1f} (tavan %{max_weight*100:.0f})")
     return SizingResult(round(weight, 4), round(k, 4), round(kf, 4),
                         round(vs, 4), note)

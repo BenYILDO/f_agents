@@ -85,6 +85,35 @@ def purged_kfold_indices(n: int, k: int = 5, embargo: int = 0):
     return out
 
 
+def combinatorial_purged_cv(n: int, n_groups: int = 6, n_test: int = 2,
+                            embargo: int = 0):
+    """Combinatorial Purged CV (López de Prado 2018) — index üreticisi.
+
+    Veriyi ``n_groups`` ardışık bloğa böler; her kombinasyonda ``n_test`` blok
+    test, kalanı eğitim olur. Test bloklarına bitişik eğitim gözlemleri ``embargo``
+    kadar **arındırılır (purge)** → geleceğe-bakma/sızıntı engellenir. Tek-katlı
+    walk-forward'a göre çok daha fazla bağımsız eğit/test yolu üretir (PBO için).
+
+    ``[(train_idx, test_idx), ...]`` döndürür.
+    """
+    from itertools import combinations
+
+    if n < n_groups or n_groups < 2 or not (1 <= n_test < n_groups):
+        return []
+    groups = np.array_split(np.arange(n), n_groups)
+    out = []
+    for combo in combinations(range(n_groups), n_test):
+        test = np.concatenate([groups[g] for g in combo])
+        purged = np.zeros(n, dtype=bool)
+        for g in combo:
+            a, b = groups[g][0], groups[g][-1]
+            lo, hi = max(0, a - embargo), min(n - 1, b + embargo)
+            purged[lo:hi + 1] = True
+        train = np.array([i for i in range(n) if not purged[i]])
+        out.append((train, np.sort(test)))
+    return out
+
+
 def walk_forward_indices(n: int, train: int, test: int, step: int | None = None):
     """Kayan pencere ileri-doğrulama: geçmişte eğit → hemen sonrasında test et."""
     step = step or test
