@@ -135,7 +135,7 @@ def compute_signals(
     dip_bars = pos - last_dip_pos                      # ilk dipten önce NaN
     in_window = (dip_bars <= arm_bars) & dip_bars.notna()
 
-    vwma_break = (smi > out["smi_vwma"]) & (smi.shift() <= out["smi_vwma"].shift())
+    vwma_break = (smi > out["smi_vwma"]).fillna(False) & (smi.shift() <= out["smi_vwma"].shift()).fillna(False)
     gap_ok = (smi - out["smi_vwma"]) >= min_gap
     rising = (smi > smi.shift()) if need_rising else pd.Series(True, index=out.index)
     not_high = smi < entry_ceil
@@ -148,7 +148,7 @@ def compute_signals(
     out["buy"] = (cand_in_cycle & first_in_cycle).fillna(False)
 
     # ── SAT: yükseliş döngüsünde tek, ≥min_sell teyit ────────────────────────
-    bear_cross = (smi < signal) & (smi.shift() >= signal.shift())
+    bear_cross = (smi < signal).fillna(False) & (smi.shift() >= signal.shift()).fillna(False)
     near_upper = out["Close"] >= out["bb_upper"] * 0.99
     vol_falling = vol < vol.rolling(5).mean()
     score_high = out["price_score"] > 50
