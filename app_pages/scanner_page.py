@@ -128,7 +128,7 @@ def render() -> None:
     st.caption(f"{'🟢' if ms.open else '🔴'} **BIST {ms.status}** — {ms.detail}")
 
     universe = _universe()
-    c1, c2, c3 = st.columns([1.4, 1, 1])
+    c1, c2, c3, c4 = st.columns([1.4, 1, 1, 1.1])
     with c1:
         scan = st.button(f"🔄 Şimdi tara ({len(universe)} hisse)",
                          type="primary", use_container_width=True)
@@ -137,6 +137,9 @@ def render() -> None:
     with c3:
         only_agree = st.toggle("Sadece mutabakatlı", value=False,
                                help="Yöntemler çelişen/nötr olanları gizle")
+    with c4:
+        min_conf = st.slider("Min güven (v3)", 0, 100, 0, step=5,
+                             help="Faz H birleşik güven skoru eşiği")
 
     if scan:
         rows = _scan_now(universe)
@@ -178,6 +181,9 @@ def render() -> None:
                 or r.get("decision") in ("GÜÇLÜ AL", "AL")]
     if only_agree:
         view = [r for r in view if agree_level_of(r) in ("güçlü", "kısmi")]
+    if min_conf > 0:
+        view = [r for r in view
+                if ((r.get("signals") or {}).get("confidence") or {}).get("score", 0) >= min_conf]
 
     if not view:
         st.caption("Filtreye uyan hisse yok.")

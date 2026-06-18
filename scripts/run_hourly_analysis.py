@@ -65,7 +65,11 @@ def _run_scope(scope: str, tickers: list[str], source: str,
     rows, buys = [], 0
     for tk in tickers:
         p_up = (model_cache.get(tk) or {}).get("p_up")
-        outcome = analysis_run.analyze_ticker(tk, regime_state=regime_state, p_up=p_up)
+        try:
+            outcome = analysis_run.analyze_ticker(tk, regime_state=regime_state, p_up=p_up)
+        except Exception as exc:  # noqa: BLE001 — tek hisse tüm işi kırmasın
+            print(f"    {tk:<12} ✗ hata: {type(exc).__name__}: {exc}", flush=True)
+            continue
         rows.append(analysis_run.to_snapshot_row(outcome, scope=scope, source=source))
         flag = ""
         if outcome.ok and outcome.status == "AL":
