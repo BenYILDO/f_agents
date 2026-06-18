@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 
 from app_pages._charts import candlestick_chart
+from app_pages._explain import decision_summary, explain_decision
 from app_pages._styles import (
     AGREE_BADGE,
     DECISION_STYLE,
@@ -138,6 +139,7 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
             "Durum": STATUS_BADGE.get(snap.get("status"), "—"),
             "Karar (v3)": conf.get("gated") or snap.get("decision", "—"),
             "Güven": f"{score:.0f} · {conf.get('grade','')}" if score is not None else "—",
+            "Neden": explain_decision(snap) if snap else "—",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -519,9 +521,14 @@ def render() -> None:
         snaps = {}
 
     _summary_metrics(positions)
+    summary = decision_summary(
+        [{**(snaps.get(t) or {}), "ticker": t} for t in tickers if snaps.get(t)]
+    )
+    if summary:
+        st.info(summary)
     _positions_table(positions, snaps)
-    st.caption("Durum/Karar/Mutabakat sütunları en güncel snapshot'tan gelir; "
-               "saat başı zamanlayıcı bunları otomatik tazeler.")
+    st.caption("'Karar (v3)' nihai karardır; 'Neden' onu tek cümlede açıklar. "
+               "Tüm sütunlar en güncel snapshot'tan gelir; saat başı zamanlayıcı tazeler.")
 
     _manage_lots(holdings)
     st.divider()

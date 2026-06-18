@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from app_pages._explain import decision_summary, explain_decision
 from app_pages._styles import (
     AGREE_BADGE,
     STATUS_BADGE,
@@ -112,6 +113,7 @@ def _rows_to_df(rows: list[dict], sort_by_z: bool = False) -> pd.DataFrame:
             "Birleşik": round(r["combined_score"], 0) if r.get("combined_score") is not None else "—",
             "Rasyo": f"{ratio} ({rscore:.0f})" if rscore is not None else ratio,
             "Mutabakat": AGREE_BADGE.get(agree_level_of(r), "—"),
+            "Neden": explain_decision(r),
             "Fiyat (TRY)": r.get("close") if r.get("close") is not None else "—",
             "Güncellenme": _age_text(r.get("ts")),
         })
@@ -175,6 +177,10 @@ def render() -> None:
         st.success(f"🟢 **{len(buys)}** hisse AL bölgesinde: "
                    + ", ".join(sorted(r["ticker"].replace(".IS", "") for r in buys)))
 
+    summary = decision_summary(rows)
+    if summary:
+        st.info(summary)
+
     view = rows
     if only_buy:
         view = [r for r in view if r.get("status") == "AL"
@@ -193,6 +199,7 @@ def render() -> None:
                        value=False, help="Faz D: winsorize + z-skor birleşik sıralama")
     st.dataframe(_rows_to_df(view, sort_by_z=sort_z),
                  use_container_width=True, hide_index=True)
-    st.caption("Varsayılan sıra: en boğa karardan en ayıya. 'Kesitsel z' = evren "
+    st.caption("'Karar (v3)' nihai karardır; 'Neden' onu tek cümlede açıklar. "
+               "Varsayılan sıra: en boğa karardan en ayıya. 'Kesitsel z' = evren "
                "içinde göreli güç (yüksek=iyi). 'Mutabakat' = teknik+rasyo+dip+teyit "
                "uyumu. Çelişki → temkin.")
