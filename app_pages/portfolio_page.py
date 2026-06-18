@@ -367,7 +367,8 @@ def _stats_v3(sel: str, df) -> None:
                  key=f"v3deep_{sel}", use_container_width=True):
         with st.spinner("Kalibre model + PBO hesaplanıyor (birkaç saniye)…"):
             pr = calibrated_probability(sel, df)
-            pbo = pbo_cscv(_ma_grid_perf(df)) if _ma_grid_perf(df) is not None else None
+            grid = _ma_grid_perf(df)
+            pbo = pbo_cscv(grid) if grid is not None else None
         if pr.ok:
             st.caption(f"🎯 Kalibre yukarı olasılığı (h=10g): **%{pr.p_up*100:.0f}** "
                        f"(Brier {pr.brier}, AUC {pr.auc}, n={pr.n_samples})")
