@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -315,7 +316,7 @@ def _confidence_v2(sel: str, df) -> None:
 
 def _ma_grid_perf(df):
     """PBO için MA-kesişim konfig ızgarasının günlük getiri matrisi (T×N)."""
-    close = df["Close"]
+    close = pd.to_numeric(df["Close"], errors="coerce").astype("float64")
     daily = close.pct_change().fillna(0)
     cols = []
     for fast in (5, 10, 20):

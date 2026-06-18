@@ -75,7 +75,12 @@ def _fetch_daily(ticker: str, period: str = "5y") -> pd.DataFrame | None:
     if raw.index.tz is not None:
         raw.index = raw.index.tz_localize(None)
     keep = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in raw.columns]
-    return raw[keep].dropna(how="any")
+    out = raw[keep].copy()
+    # yeni yfinance/pandas nullable dtype (Float64/pd.NA) döndürebilir; pd.NA
+    # "&"/karşılaştırmada NAType.__bool__ hatası verir → düz float64'e zorla.
+    for col in keep:
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype("float64")
+    return out.dropna(how="any")
 
 
 def _trend_component(ind: pd.DataFrame) -> tuple[float, str]:

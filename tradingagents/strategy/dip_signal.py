@@ -80,7 +80,7 @@ def compute_smi(df: pd.DataFrame, k: int = 10, d: int = 3, ema_len: int = 3):
     diff = (hh - ll)
     smooth_rel = _ema(_ema(rel, d), d)
     smooth_diff = _ema(_ema(diff, d), d)
-    smi = 100.0 * smooth_rel / (smooth_diff / 2.0).replace(0, pd.NA)
+    smi = 100.0 * smooth_rel / (smooth_diff / 2.0).replace(0, np.nan)
     smi = smi.astype("float64")
     signal = _ema(smi, ema_len)
     return smi, signal
@@ -89,8 +89,8 @@ def compute_smi(df: pd.DataFrame, k: int = 10, d: int = 3, ema_len: int = 3):
 def _vwma(series: pd.Series, volume: pd.Series, n: int) -> pd.Series:
     """Hacim ağırlıklı hareketli ortalama (verilen seri üzerinde)."""
     num = (series * volume).rolling(n).sum()
-    den = volume.rolling(n).sum().replace(0, pd.NA)
-    return num / den
+    den = volume.rolling(n).sum().replace(0, np.nan)
+    return (num / den).astype("float64")
 
 
 def compute_signals(
@@ -112,6 +112,12 @@ def compute_signals(
     her dip döngüsünde yalnızca BİR kez verilir (gürültü/tekrar elenir).
     """
     out = df.copy()
+    # yfinance/yeni pandas bazen nullable dtype (Float64/pd.NA) döndürür; bu
+    # pd.NA değerleri "&"/karşılaştırmada NAType.__bool__ hatası verir. Tüm
+    # OHLCV'yi düz float64'e (NaN, pd.NA değil) zorla.
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("float64")
     vol = out["Volume"].astype("float64")
     smi, signal = compute_smi(out)
     out["smi"] = smi
