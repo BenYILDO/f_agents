@@ -92,7 +92,7 @@ def _show_replay_result(result):
             "CAGR": f"%{x['cagr']*100:+.1f}",
             "Sharpe": f"{x['sharpe']:.2f}",
             "Maks DD": f"%{x['max_drawdown']*100:.1f}",
-            "İşlem": x["n_trades"],
+            "İşlem": str(x["n_trades"]),   # str: XU100 satırı "—" ile karışınca Arrow kırılır
             "İsabet": f"%{x['win_rate']*100:.0f}",
             "XU100>?": "✅" if x["beats_benchmark"] else "—",
         })
