@@ -35,6 +35,9 @@ from tradingagents.strategy.dip_signal import compute_signals
 _STATUS_FROM_DIP = {"AL BÖLGESİ": "AL", "SAT UYARISI": "SAT"}
 _RATIO_DIR = {"AL": trust.UP, "SAT": trust.DOWN, "TUT": trust.FLAT}
 
+# Sinyal motorunun sürümü — paper arena ve replay karşılaştırmaları için değişmez referans
+STRATEGY_VERSION = "v3.1-faz0"
+
 
 def _composite_dir(score: float | None, ok: bool) -> int:
     if not ok or score is None:
@@ -243,8 +246,15 @@ def to_snapshot_row(
     outcome: AnalysisOutcome, scope: str = "portfolio", source: str = "cron"
 ) -> dict:
     """:class:`AnalysisOutcome` → ``analysis_snapshots`` satırı (Supabase)."""
+    now = datetime.now(timezone.utc)
+    signals = dict(outcome.signals or {})
+    signals["_meta"] = {
+        "strategy_version": STRATEGY_VERSION,
+        "signal_asof": now.isoformat(),
+        "last_bar": (outcome.health or {}).get("last_bar"),
+    }
     return {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now.isoformat(),
         "ticker": outcome.ticker,
         "scope": scope,
         "source": source,
@@ -258,7 +268,7 @@ def to_snapshot_row(
         "agreement": f"{outcome.agreement_level}: {outcome.agreement}",
         "close": outcome.close,
         "smi": outcome.smi,
-        "signals": outcome.signals or {},
+        "signals": signals,
         "health": outcome.health or {},
     }
 

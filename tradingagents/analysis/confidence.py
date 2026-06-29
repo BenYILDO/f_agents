@@ -105,11 +105,16 @@ def unified_confidence(
     elif vol_regime == "düşük":
         score += 3
 
-    # Kalibre olasılık (varsa) — yönden uzaklık güveni artırır
+    # Kalibre olasılık (varsa) — karar yönüyle hizalı yönlü katkı
+    # model_edge = 2*(p_up - 0.5): +1=güçlü yukarı, -1=güçlü aşağı
+    # decision_dir: AL=+1, SAT=-1, nötr=0
+    # Böylece "AL karar + model aşağı diyor" → katkı negatif (önceki abs() bug'ı düzeltildi)
     if p_up is not None:
-        conviction = abs(p_up - 0.5) * 2  # 0..1
-        score += conviction * 12
-        reasons.append(f"Kalibre olasılık %{p_up*100:.0f}")
+        model_edge = 2.0 * (p_up - 0.5)       # -1 … +1
+        decision_dir = 1 if bullish else (-1 if bearish else 0)
+        katkı = decision_dir * model_edge * 12
+        score += katkı
+        reasons.append(f"Kalibre olasılık %{p_up*100:.0f} (katkı {katkı:+.1f})")
 
     score = round(max(0.0, min(100.0, score)), 1)
 

@@ -55,13 +55,22 @@ def _age_text(ts_value) -> str:
 
 
 def _scan_now(universe: list[str]) -> list[dict]:
-    """BIST 30'u anlık analiz eder; snapshot dict'leri döndürür (+ yazmayı dener)."""
-    rows: list[dict] = []
+    """BIST 30'u anlık analiz eder; snapshot dict'leri döndürür (+ yazmayı dener).
+
+    analyze_universe() kullanır — rejim + makro şoku bir kez hesaplar ve
+    tüm hisseler aynı kapılardan geçer (cron ile aynı davranış).
+    """
     prog = st.progress(0.0, text="BIST 30 taranıyor…")
-    for i, tk in enumerate(universe, 1):
-        outcome = analysis_run.analyze_ticker(tk)
+
+    outcomes = analysis_run.analyze_universe(
+        universe,
+        macro_shock=analysis_run.macro_shock_state(),
+    )
+
+    rows: list[dict] = []
+    for i, outcome in enumerate(outcomes, 1):
         rows.append(analysis_run.to_snapshot_row(outcome, scope="bist30", source="manual"))
-        prog.progress(i / len(universe), text=f"{tk} ({i}/{len(universe)})")
+        prog.progress(i / len(universe), text=f"{outcome.ticker} ({i}/{len(universe)})")
     prog.empty()
     if is_configured():
         try:

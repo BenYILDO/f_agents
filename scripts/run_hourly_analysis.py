@@ -55,7 +55,8 @@ def _portfolio_tickers() -> list[str]:
 
 
 def _run_scope(scope: str, tickers: list[str], source: str,
-               regime_state=None, model_cache=None) -> tuple[int, int]:
+               regime_state=None, model_cache=None,
+               macro_shock: bool = False) -> tuple[int, int]:
     """Bir evreni analiz edip snapshot'ları yazar. (yazılan, AL_sinyali) döndürür."""
     if not tickers:
         print(f"  [{scope}] hisse yok, atlandı.", flush=True)
@@ -66,7 +67,9 @@ def _run_scope(scope: str, tickers: list[str], source: str,
     for tk in tickers:
         p_up = (model_cache.get(tk) or {}).get("p_up")
         try:
-            outcome = analysis_run.analyze_ticker(tk, regime_state=regime_state, p_up=p_up)
+            outcome = analysis_run.analyze_ticker(
+                tk, regime_state=regime_state, p_up=p_up, macro_shock=macro_shock,
+            )
         except Exception as exc:  # noqa: BLE001 — tek hisse tüm işi kırmasın
             print(f"    {tk:<12} ✗ hata: {type(exc).__name__}: {exc}", flush=True)
             continue
@@ -106,10 +109,17 @@ def main() -> int:
               "— atlanıyor. Kurulum: docs/SUPABASE_SETUP.md", flush=True)
         return 0
 
-    # Faz H: rejimi bir kez hesapla + gecelik model önbelleğini oku (varsa)
+    # Faz H: rejimi + makro şoku bir kez hesapla + gecelik model önbelleğini oku
     regime_state = analysis_run.index_regime()
     if regime_state is not None:
         print(f"  Piyasa rejimi: {regime_state.trend} · vol {regime_state.vol_regime}", flush=True)
+
+    macro_shock = analysis_run.macro_shock_state()
+    if macro_shock:
+        print("  ⚠️ USDTRY sistemik şok aktif — yeni alımlar durdurulacak", flush=True)
+    else:
+        print("  Makro şok: normal", flush=True)
+
     try:
         from tradingagents.storage import model_cache as _mc
         models = _mc.read_models()
@@ -121,12 +131,14 @@ def main() -> int:
     total_written = 0
     if args.scope in ("all", "portfolio"):
         written, buys = _run_scope("portfolio", _portfolio_tickers(), source="cron",
-                                   regime_state=regime_state, model_cache=models)
+                                   regime_state=regime_state, model_cache=models,
+                                   macro_shock=macro_shock)
         total_written += written
         print(f"  [portfolio] {written} snapshot, {buys} AL sinyali", flush=True)
     if args.scope in ("all", "bist30"):
         written, buys = _run_scope("bist30", _bist30_universe(), source="cron",
-                                   regime_state=regime_state, model_cache=models)
+                                   regime_state=regime_state, model_cache=models,
+                                   macro_shock=macro_shock)
         total_written += written
         print(f"  [bist30] {written} snapshot, {buys} AL sinyali", flush=True)
 
