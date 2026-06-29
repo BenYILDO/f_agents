@@ -54,9 +54,25 @@ def _model_row(ticker: str) -> dict | None:
         return None
     return {
         "ticker": ticker,
+        # eski/temel kolonlar (geriye uyumlu)
         "p_up": pr.p_up, "brier": pr.brier, "auc": pr.auc,
         "horizon": pr.horizon, "n_samples": pr.n_samples, "dsr": dsr,
+        # F0.2 zengin kanıt — model kalitesi/red nedenleri snapshot'a kadar taşınır
+        "brier_raw": pr.brier_raw, "brier_calibrated": pr.brier_calibrated,
+        "brier_skill_score": pr.brier_skill_score, "recent_skill": pr.recent_skill,
+        "n_calibration": pr.n_calibration, "n_test": pr.n_test,
+        "quality_passed": pr.quality_passed, "rejection_reasons": pr.rejection_reasons,
+        "model_version": pr.model_version, "trained_until": pr.trained_until or None,
     }
+
+
+# Migrate edilmemiş model_cache tablosu (yeni kolonlar yok) için güvenli alt küme.
+_LEGACY_COLS = {"ticker", "p_up", "brier", "auc", "horizon", "n_samples", "dsr"}
+
+
+def _legacy_row(row: dict) -> dict:
+    """Yeni kolonları olmayan eski şema için satırı temel kolonlara indirger."""
+    return {k: v for k, v in row.items() if k in _LEGACY_COLS}
 
 
 def main() -> int:
@@ -79,8 +95,15 @@ def main() -> int:
     try:
         model_cache.upsert_models(rows)
     except SupabaseError as exc:
-        print(f"  ! Yazılamadı: {exc}", flush=True)
-        return 1
+        # Büyük olasılıkla model_cache tablosu henüz F0.2 kolonlarıyla migrate
+        # edilmemiş; temel kolonlarla tekrar dene (kalite metrikleri yazılmaz).
+        print(f"  ! Zengin kanıt yazılamadı ({exc}). schema.sql'i yeniden çalıştır; "
+              "şimdilik temel kolonlarla yazılıyor.", flush=True)
+        try:
+            model_cache.upsert_models([_legacy_row(r) for r in rows])
+        except SupabaseError as exc2:
+            print(f"  ! Yazılamadı: {exc2}", flush=True)
+            return 1
     print(f"== Bitti · {len(rows)} model yazıldı · {time.time()-started:.0f}s ==", flush=True)
     return 0 if rows else 1
 

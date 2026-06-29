@@ -146,6 +146,68 @@ class TestProbabilityResultSozlesmesi:
         bss = _brier_skill_score(brier_naive_approx * 1.5, y)
         assert bss < 0.0
 
+    def test_yeni_kanit_alanlari_mevcut(self):
+        """ModelEvidence sözleşmesi: recent_skill, model_version, prediction_asof,
+        trained_until, n_train alanları bulunmalı."""
+        from tradingagents.analytics.probability import ProbabilityResult, MODEL_VERSION
+        r = ProbabilityResult(
+            ok=True, ticker="GARAN", p_up=0.6, recent_skill=0.04,
+            n_train=250, prediction_asof="2026-06-29T00:00:00+00:00",
+            trained_until="2026-06-27", quality_passed=True,
+        )
+        assert r.recent_skill == 0.04
+        assert r.n_train == 250
+        assert r.prediction_asof.startswith("2026")
+        assert r.trained_until == "2026-06-27"
+        # model_version varsayılanı MODEL_VERSION'a eşit olmalı
+        assert ProbabilityResult(ok=True).model_version == MODEL_VERSION
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F0.1b  validate_model_evidence — kalite kararı tek saf fonksiyonda
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestValidateModelEvidence:
+    """Kalite kapısı ayrı saf fonksiyonda; çıplak boolean yok, neden listesi var."""
+
+    def test_hepsi_gecince_quality_true(self):
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.58, n_test=30, brier_skill_score=0.05)
+        assert ok is True
+        assert reasons == []
+
+    def test_dusuk_auc_reddedilir(self):
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.50, n_test=30, brier_skill_score=0.05)
+        assert ok is False
+        assert any("auc" in r for r in reasons)
+
+    def test_kucuk_test_penceresi_reddedilir(self):
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.58, n_test=10, brier_skill_score=0.05)
+        assert ok is False
+        assert any("test_penceresi" in r for r in reasons)
+
+    def test_bss_olculemedi_reddedilir(self):
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.58, n_test=30, brier_skill_score=None)
+        assert ok is False
+        assert any("bss_olculemedi" in r for r in reasons)
+
+    def test_negatif_bss_reddedilir(self):
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.58, n_test=30, brier_skill_score=-0.02)
+        assert ok is False
+        assert any("bss_negatif" in r for r in reasons)
+
+    def test_birden_cok_red_nedeni_birikir(self):
+        """Birden çok şart düşerse hepsi rejection_reasons'ta toplanmalı."""
+        from tradingagents.analytics.probability import validate_model_evidence
+        ok, reasons = validate_model_evidence(auc=0.40, n_test=5, brier_skill_score=None)
+        assert ok is False
+        assert len(reasons) >= 3
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # F0.3  Makro şok entegrasyonu
@@ -208,11 +270,12 @@ class TestMakroSokEntegrasyon:
 class TestSnapshotSurumleme:
     """to_snapshot_row → signals._meta alanında strateji versiyonu bulunmalı."""
 
-    def _make_outcome(self):
+    def _make_outcome(self, model_meta=None):
         from tradingagents.analysis.run import AnalysisOutcome
         return AnalysisOutcome(
             ticker="GARAN", ok=True, status="AL", decision="AL",
             health={"last_bar": "2026-06-27"},
+            model_meta=model_meta or {},
         )
 
     def test_meta_alani_mevcut(self):
@@ -234,3 +297,61 @@ class TestSnapshotSurumleme:
         from tradingagents.analysis.run import to_snapshot_row
         row = to_snapshot_row(self._make_outcome())
         assert row["signals"]["_meta"]["last_bar"] == "2026-06-27"
+
+    def test_universe_version_kayitli(self):
+        from tradingagents.analysis.run import to_snapshot_row, UNIVERSE_VERSION
+        row = to_snapshot_row(self._make_outcome())
+        assert row["signals"]["_meta"]["universe_version"] == UNIVERSE_VERSION
+
+    def test_signal_session_mevcut(self):
+        from tradingagents.analysis.run import to_snapshot_row
+        row = to_snapshot_row(self._make_outcome())
+        assert row["signals"]["_meta"]["signal_session"] is not None
+
+    def test_model_kaniti_meta_ya_akar(self):
+        """model_meta verilince model_version + red nedenleri snapshot _meta'ya yazılır."""
+        from tradingagents.analysis.run import to_snapshot_row
+        mm = {"model_version": "calib-v1-sigmoid-bss", "quality_passed": False,
+              "rejection_reasons": ["bss_negatif (-0.020)"]}
+        row = to_snapshot_row(self._make_outcome(model_meta=mm))
+        meta = row["signals"]["_meta"]
+        assert meta["model_version"] == "calib-v1-sigmoid-bss"
+        assert meta["model_quality_passed"] is False
+        assert "bss_negatif (-0.020)" in meta["model_rejection_reasons"]
+
+    def test_model_meta_yoksa_alanlar_none(self):
+        """model_meta verilmezse model alanları None (snapshot yine de tutarlı)."""
+        from tradingagents.analysis.run import to_snapshot_row
+        meta = to_snapshot_row(self._make_outcome())["signals"]["_meta"]
+        assert meta["model_version"] is None
+        assert meta["model_quality_passed"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F0.3b  analyze_ticker model_meta'yı snapshot'a taşır (orchestrator sözleşmesi)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestModelMetaOrchestrator:
+    """analyze_ticker model_meta parametresini kabul edip outcome'a taşımalı."""
+
+    def test_analyze_ticker_model_meta_parametresi(self):
+        import inspect
+        from tradingagents.analysis.run import analyze_ticker
+        sig = inspect.signature(analyze_ticker)
+        assert "model_meta" in sig.parameters
+
+    def test_analyze_universe_model_cache_satirini_gecirir(self):
+        """analyze_universe model_cache satırından p_up + model_meta türetip geçirmeli."""
+        from unittest.mock import patch, MagicMock
+        from tradingagents.analysis.run import analyze_universe
+        cache = {"GARAN": {"p_up": 0.61, "model_version": "calib-v1-sigmoid-bss",
+                           "quality_passed": True, "rejection_reasons": []}}
+        with patch("tradingagents.analysis.run.macro_shock_state", return_value=False), \
+             patch("tradingagents.analysis.run.index_regime", return_value=None), \
+             patch("tradingagents.analysis.run.analyze_ticker") as mock_at:
+            mock_at.return_value = MagicMock(ok=True)
+            analyze_universe(["GARAN"], model_cache=cache)
+            _, kwargs = mock_at.call_args
+            assert kwargs.get("p_up") == 0.61
+            assert kwargs.get("model_meta", {}).get("model_version") == "calib-v1-sigmoid-bss"

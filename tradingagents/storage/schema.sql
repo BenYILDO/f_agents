@@ -92,6 +92,20 @@ create table if not exists model_cache (
     updated_at   timestamptz not null default now()
 );
 
+-- F0.2 — zengin model kanıtı (sigmoid kalibrasyon + BSS + kalite kapısı).
+-- Mevcut kurulumlarda tabloya ek kolonları idempotent olarak ekler; gecelik iş
+-- bunları yazar, snapshot _meta'sına "model neden kullanıldı/kullanılmadı" izi taşınır.
+alter table model_cache add column if not exists brier_raw          numeric;
+alter table model_cache add column if not exists brier_calibrated   numeric;
+alter table model_cache add column if not exists brier_skill_score  numeric;
+alter table model_cache add column if not exists recent_skill       numeric;
+alter table model_cache add column if not exists n_calibration      int;
+alter table model_cache add column if not exists n_test             int;
+alter table model_cache add column if not exists quality_passed     boolean;
+alter table model_cache add column if not exists rejection_reasons  jsonb;
+alter table model_cache add column if not exists model_version      text;
+alter table model_cache add column if not exists trained_until      text;
+
 -- ════════════════════════════════════════════════════════════════════════
 -- Güvenlik (RLS) — tek kullanıcılı kurulum
 -- ────────────────────────────────────────────────────────────────────────

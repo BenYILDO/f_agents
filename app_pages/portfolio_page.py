@@ -98,8 +98,10 @@ def _add_form() -> None:
         return
 
     # Ekler eklemez anında deterministik analiz + ilk snapshot
+    # Makro şok kapısı cron/scanner ile aynı uygulansın diye burada da hesaplanır.
     with st.spinner(f"{ticker} eklendi — anında analiz ediliyor…"):
-        outcome = analysis_run.analyze_ticker(ticker)
+        outcome = analysis_run.analyze_ticker(
+            ticker, macro_shock=analysis_run.macro_shock_state())
         try:
             snapshots.write_snapshot(
                 analysis_run.to_snapshot_row(outcome, scope="portfolio", source="on_add")
@@ -452,7 +454,8 @@ def _detail_view(tickers: list[str]) -> None:
 
     if recompute:
         with st.spinner(f"{sel} yeniden analiz ediliyor…"):
-            outcome = analysis_run.analyze_ticker(sel, df=df)
+            outcome = analysis_run.analyze_ticker(
+                sel, df=df, macro_shock=analysis_run.macro_shock_state())
             try:
                 snapshots.write_snapshot(
                     analysis_run.to_snapshot_row(outcome, scope="portfolio", source="manual")
@@ -536,11 +539,14 @@ def render() -> None:
 
     if manual_all:
         prog = st.progress(0.0, text="Analiz ediliyor…")
+        # analyze_universe() kullan — rejim + makro şoku bir kez hesaplar ve tüm
+        # hisseler aynı kapılardan geçer (cron/scanner ile aynı davranış).
+        outcomes = analysis_run.analyze_universe(
+            tickers, macro_shock=analysis_run.macro_shock_state())
         rows = []
-        for i, tk in enumerate(tickers, 1):
-            outcome = analysis_run.analyze_ticker(tk)
+        for i, outcome in enumerate(outcomes, 1):
             rows.append(analysis_run.to_snapshot_row(outcome, scope="portfolio", source="manual"))
-            prog.progress(i / len(tickers), text=f"{tk} ({i}/{len(tickers)})")
+            prog.progress(i / len(outcomes), text=f"{outcome.ticker} ({i}/{len(outcomes)})")
         try:
             snapshots.write_snapshots(rows)
             st.success(f"{len(rows)} hisse analiz edildi ve kaydedildi ✓")

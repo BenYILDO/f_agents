@@ -37,6 +37,9 @@ _RATIO_DIR = {"AL": trust.UP, "SAT": trust.DOWN, "TUT": trust.FLAT}
 
 # Sinyal motorunun sürümü — paper arena ve replay karşılaştırmaları için değişmez referans
 STRATEGY_VERSION = "v3.1-faz0"
+# Evren tanımının sürümü — hangi BIST listesiyle üretildiği snapshot'a yazılır
+# (survivorship/point-in-time evren değişince artırılır).
+UNIVERSE_VERSION = "bist30-2026H1"
 
 
 def _composite_dir(score: float | None, ok: bool) -> int:
@@ -80,6 +83,7 @@ class AnalysisOutcome:
     signals: dict = field(default_factory=dict)
     health: dict = field(default_factory=dict)
     rationale: list = field(default_factory=list)
+    model_meta: dict = field(default_factory=dict)  # model kanıtı (sürüm + kalite/red nedenleri)
     error: str = ""
 
 
@@ -110,12 +114,15 @@ def analyze_ticker(
     regime_state=None,
     p_up: Optional[float] = None,
     macro_shock: bool = False,
+    model_meta: Optional[dict] = None,
 ) -> AnalysisOutcome:
     """Bir hisseyi deterministik motorlarla analiz eder. Asla istisna fırlatmaz.
 
     ``regime_state`` (Faz B) ve ``p_up`` (Faz A, gecelik kalibrasyon) verilirse
     birleşik güven skoruna katılır; verilmezse onlarsız da çalışır. ``macro_shock``
     (USDTRY sistemik şok) verilirse yeni alımları durduran sert kapı tetiklenir.
+    ``model_meta`` (model sürümü + kalite/red nedenleri) verilirse snapshot'a
+    yazılır — "model neden kullanıldı/kullanılmadı?" izi kaybolmaz.
     """
     ticker = ticker.strip().upper()
     if df is None:
@@ -133,6 +140,7 @@ def analyze_ticker(
             ok=False,
             error=comb.error or dip.error or "Veri yok",
             health=health,
+            model_meta=dict(model_meta or {}),
         )
 
     tech_ok = comb.technical is not None
@@ -239,6 +247,7 @@ def analyze_ticker(
         signals=signals,
         health=health,
         rationale=list(comb.rationale),
+        model_meta=dict(model_meta or {}),
     )
 
 
@@ -248,10 +257,17 @@ def to_snapshot_row(
     """:class:`AnalysisOutcome` → ``analysis_snapshots`` satırı (Supabase)."""
     now = datetime.now(timezone.utc)
     signals = dict(outcome.signals or {})
+    mm = outcome.model_meta or {}
     signals["_meta"] = {
         "strategy_version": STRATEGY_VERSION,
+        "universe_version": UNIVERSE_VERSION,
+        "signal_session": now.date().isoformat(),
         "signal_asof": now.isoformat(),
         "last_bar": (outcome.health or {}).get("last_bar"),
+        # Model kanıtı izi — kalitesiz/bayat model neden katkı vermedi sorusunu cevaplar
+        "model_version": mm.get("model_version"),
+        "model_quality_passed": mm.get("quality_passed"),
+        "model_rejection_reasons": mm.get("rejection_reasons"),
     }
     return {
         "ts": now.isoformat(),
@@ -321,8 +337,20 @@ def analyze_universe(
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
-        p_up = (model_cache.get(ticker) or {}).get("p_up")
+        row = model_cache.get(ticker) or {}
         outcomes.append(analyze_ticker(ticker, interval_label,
-                                       regime_state=regime_state, p_up=p_up,
-                                       macro_shock=macro_shock))
+                                       regime_state=regime_state, p_up=row.get("p_up"),
+                                       macro_shock=macro_shock,
+                                       model_meta=_model_meta_from_row(row)))
     return outcomes
+
+
+def _model_meta_from_row(row: dict) -> dict:
+    """model_cache satırından snapshot'a yazılacak model kanıtı izini çıkarır."""
+    if not row:
+        return {}
+    return {
+        "model_version": row.get("model_version"),
+        "quality_passed": row.get("quality_passed"),
+        "rejection_reasons": row.get("rejection_reasons"),
+    }
