@@ -35,6 +35,7 @@ from tradingagents.strategy.dip_signal import (
     BIST_POPULAR,
 )
 from app_pages import (
+    arena_page,
     combined_page,
     fundamental_page,
     gold_fx_page,
@@ -98,10 +99,10 @@ def _build_report_markdown(state: dict, ticker: str, trade_date: str) -> str:
 # ── Kenar çubuğu ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    mode = st.radio("Ekran", ["💼 Portföyüm", "📡 BIST 30 Tarayıcı", "🤖 AI Analizi",
-                              "🎯 Birleşik Karar", "🧰 Teknik Analiz", "🧾 Temel Skor",
-                              "🔮 ML Sinyal", "📐 Dip-Al Stratejisi", "📅 Sezonsallık",
-                              "🥇 Altın & Döviz"])
+    mode = st.radio("Ekran", ["💼 Portföyüm", "🏟️ Paper Arena", "📡 BIST 30 Tarayıcı",
+                              "🤖 AI Analizi", "🎯 Birleşik Karar", "🧰 Teknik Analiz",
+                              "🧾 Temel Skor", "🔮 ML Sinyal", "📐 Dip-Al Stratejisi",
+                              "📅 Sezonsallık", "🥇 Altın & Döviz"])
 
     env_key = os.environ.get("OPENAI_API_KEY")
     if mode == "🤖 AI Analizi":
@@ -514,6 +515,8 @@ def render_scanner():
 # ── Yönlendirme ─────────────────────────────────────────────────────────────
 if mode == "💼 Portföyüm":
     portfolio_page.render()
+elif mode == "🏟️ Paper Arena":
+    arena_page.render()
 elif mode == "📡 BIST 30 Tarayıcı":
     scanner_page.render()
 elif mode == "🤖 AI Analizi":
