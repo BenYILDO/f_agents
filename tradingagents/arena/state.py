@@ -156,8 +156,55 @@ def new_state(season_id: str = "2026-H2-S1", initial_capital: float = 100_000.0)
                       created_at=datetime.now(timezone.utc).isoformat(), accounts=accounts)
 
 
-def load_state(path: str = _DEFAULT_PATH) -> ArenaState | None:
-    """Yerel durumu yükler; yoksa None (çağıran new_state ile başlatır)."""
+_TABLE = "arena_state"
+_DEFAULT_SEASON = "2026-H2-S1"
+
+
+def _supabase_load(season_id: str) -> ArenaState | None:
+    """Supabase ``arena_state`` tablosundan sezonu yükler. Hata/eksik → None."""
+    try:
+        from tradingagents.storage.supabase_client import SupabaseREST
+        rows = SupabaseREST().select(_TABLE, {"season_id": f"eq.{season_id}", "limit": "1"})
+        if rows and rows[0].get("state"):
+            return ArenaState.from_dict(rows[0]["state"])
+    except Exception:  # noqa: BLE001 — bağlantı/şema sorunu yerele düşürür
+        return None
+    return None
+
+
+def _supabase_save(state: ArenaState) -> bool:
+    """Durumu Supabase'e upsert eder (season_id çakışmasında günceller)."""
+    try:
+        from tradingagents.storage.supabase_client import SupabaseREST
+        SupabaseREST().upsert(_TABLE, {
+            "season_id": state.season_id, "state": state.to_dict(),
+            "last_session": state.last_session,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="season_id")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def storage_backend() -> str:
+    """Aktif kalıcılık katmanı — 'supabase' (kalıcı) ya da 'local' (geçici)."""
+    try:
+        from tradingagents.storage.supabase_client import is_configured
+        return "supabase" if is_configured() else "local"
+    except Exception:  # noqa: BLE001
+        return "local"
+
+
+def load_state(path: str = _DEFAULT_PATH, season_id: str = _DEFAULT_SEASON) -> ArenaState | None:
+    """Durumu yükler. Supabase yapılandırılmışsa oradan (kalıcı), yoksa yerel JSON.
+
+    Çağıran None alırsa :func:`new_state` ile başlatır.
+    """
+    if storage_backend() == "supabase":
+        s = _supabase_load(season_id)
+        if s is not None:
+            return s
+        # Supabase'te yoksa yerel kopyayı taşımayı dene (geçişte veri kaybolmasın)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return ArenaState.from_dict(json.load(f))
@@ -166,7 +213,9 @@ def load_state(path: str = _DEFAULT_PATH) -> ArenaState | None:
 
 
 def save_state(state: ArenaState, path: str = _DEFAULT_PATH) -> None:
-    """Durumu yerel JSON'a atomik yazar (önce .tmp, sonra rename)."""
+    """Durumu kaydeder. Supabase varsa oraya (kalıcı) + yerel kopya; yoksa yalnız yerel."""
+    if storage_backend() == "supabase":
+        _supabase_save(state)   # başarısızsa sessizce yerele güveniriz
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

@@ -152,7 +152,18 @@ create table if not exists paper_predictions (
     unique (season_id, ticker, signal_asof, model_version)
 );
 
+-- Canlı durum snapshot'ı (yerel-önce kalıcılık) — V1'de arena durumunun tamamını
+-- (hesaplar/nakit/pozisyon/bekleyen emir/equity/observer) tek JSONB belge olarak
+-- tutar; reboot'a dayanır. Normalize tablolar (üstte) ileri analitik/audit içindir.
+create table if not exists arena_state (
+    season_id    text primary key,
+    state        jsonb not null,
+    last_session text,
+    updated_at   timestamptz not null default now()
+);
+
 -- ── Güvenlik (RLS) — tek kullanıcılı kurulum (schema.sql ile aynı ilke) ──────
+alter table arena_state       enable row level security;
 alter table arena_seasons     enable row level security;
 alter table paper_accounts    enable row level security;
 alter table paper_runs        enable row level security;

@@ -180,12 +180,20 @@ def _render_profiles():
 def _render_live():
     from tradingagents.arena.config import DEFAULT_EXECUTION
     from tradingagents.arena.live import build_session_inputs, run_session
-    from tradingagents.arena.state import D, load_state, new_state, save_state
+    from tradingagents.arena.state import (
+        D, load_state, new_state, save_state, storage_backend,
+    )
 
     st.subheader("🔴 Canlı Sezon — bugünün sinyalleriyle ileriye işleyen arena")
     st.caption("Her seansta gerçek analiz (güven+rejim+makro şok+p_up) emir üretir, "
-               "emirler ertesi seans açılışında (T+1) dolar, kasa/pozisyon/equity birikir. "
-               "Yerel JSON'da saklanır (Supabase gerekmez).")
+               "emirler ertesi seans açılışında (T+1) dolar, kasa/pozisyon/equity birikir.")
+
+    backend = storage_backend()
+    if backend == "supabase":
+        st.success("💾 Kalıcılık: **Supabase** — sezon reboot'a dayanır.")
+    else:
+        st.warning("💾 Kalıcılık: **yerel (geçici)** — Streamlit reboot'unda sıfırlanır. "
+                   "Kalıcı olması için Supabase secrets + `arena_state` tablosu gerekir.")
 
     state = load_state() or new_state()
 
