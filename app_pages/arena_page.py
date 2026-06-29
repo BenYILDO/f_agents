@@ -75,12 +75,17 @@ def _show_replay_result(result):
         st.success(result.edge_summary)
     else:
         st.warning(result.edge_summary)
+    bm0 = result.benchmark_metrics
     st.caption(f"{result.n_tickers} hisse · pencere {result.period} · "
-               f"XU100 getiri %{result.benchmark_metrics.total_return*100:+.1f} · "
-               f"Sharpe {result.benchmark_metrics.sharpe:.2f}")
+               f"XU100 getiri %{bm0.total_return*100:+.1f} · Sharpe {bm0.sharpe:.2f} · "
+               f"Maks DD %{bm0.max_drawdown*100:.1f}")
+    st.info("ℹ️ **Edge kapısı risk-ayarlıdır:** %940'lık enflasyonist index'i mutlak "
+            "getiride geçmek yanlış bardır (nakit-drag + overfit riski). Kapı **Sharpe + "
+            "drawdown**'a bakar: index kadar verimli ama daha az sancı = gerçek edge. "
+            "Mutlak getiri yine de şeffaflık için tabloda.")
 
     # Lig tablosu
-    st.markdown("##### 🏆 Lig tablosu (getiriye göre)")
+    st.markdown("##### 🏆 Lig tablosu (Sharpe'a göre)")
     rows = []
     for x in result.leaderboard:
         rows.append({
@@ -94,7 +99,7 @@ def _show_replay_result(result):
             "Maks DD": f"%{x['max_drawdown']*100:.1f}",
             "İşlem": str(x["n_trades"]),   # str: XU100 satırı "—" ile karışınca Arrow kırılır
             "İsabet": f"%{x['win_rate']*100:.0f}",
-            "XU100>?": "✅" if x["beats_benchmark"] else "—",
+            "Risk-ayarlı XU100>?": "✅" if x["beats_benchmark"] else "—",
         })
     # XU100 referans satırı
     bm = result.benchmark_metrics
@@ -103,7 +108,8 @@ def _show_replay_result(result):
         "Kasa (TL)": f"{result.benchmark_equity.iloc[-1]:,.0f}" if len(result.benchmark_equity) else "—",
         "Getiri": f"%{bm.total_return*100:+.1f}", "XU100'e karşı": "—",
         "CAGR": f"%{bm.cagr*100:+.1f}", "Sharpe": f"{bm.sharpe:.2f}",
-        "Maks DD": f"%{bm.max_drawdown*100:.1f}", "İşlem": "—", "İsabet": "—", "XU100>?": "—",
+        "Maks DD": f"%{bm.max_drawdown*100:.1f}", "İşlem": "—", "İsabet": "—",
+        "Risk-ayarlı XU100>?": "—",
     })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -122,6 +128,16 @@ def _show_replay_result(result):
         with st.expander(f"{prof.emoji} {prof.name} — %{x['total_return']*100:+.1f} · "
                          f"{x['n_trades']} işlem"):
             st.caption(prof.blurb)
+            # Çıkış-sebebi dökümü: kaç stop / sinyal / hedef / süre / sezon-sonu
+            if r.trades:
+                from collections import Counter
+                cnt = Counter(t.exit_reason for t in r.trades)
+                wins = sum(1 for t in r.trades if t.pnl > 0)
+                st.caption(
+                    f"Çıkışlar → " + " · ".join(f"{k}: {v}" for k, v in cnt.most_common())
+                    + f"  |  kazanan {wins}/{len(r.trades)} · "
+                    f"Sharpe {x['sharpe']:.2f} · Maks DD %{x['max_drawdown']*100:.1f}"
+                )
             if r.trades:
                 last = r.trades[-8:]
                 st.dataframe(pd.DataFrame([{

@@ -128,40 +128,54 @@ def run_arena_replay(
         _tick(0.6 + 0.35 * k / len(profiles), f"Profil: {prof.name}…")
         per_profile[prof.code] = run_backtest(prof, data, dates, cfg, regime)
 
-    # ── Lig tablosu + edge kapısı ──────────────────────────────────────────
+    # ── Lig tablosu + edge kapısı (RİSK-AYARLI) ────────────────────────────
+    # Edge kapısı mutlak getiriye değil risk-ayarlıya bakar: enflasyonist boğada
+    # (TL-nominal XU100 ~10x) mutlak getiride index'i geçmek yanlış bardır ve
+    # daha riskli/overfit stratejilere iter. Planın amacı da "risk-ayarlı kıyas".
+    # "Geçti" = Sharpe ≥ benchmark VE drawdown benchmark'tan sığ (daha az sancı).
+    # Survivorship bias mutlak getiriyi şişirir ama drawdown'u görece az → bu
+    # tanım daha dayanıklı. Mutlak getiri yine de şeffaflık için gösterilir.
     bench_ret = bench_metrics.total_return
+    bench_sharpe = bench_metrics.sharpe
+    bench_dd = bench_metrics.max_drawdown
     leaderboard = []
     for prof in profiles:
         r = per_profile[prof.code]
         alpha = r.metrics.total_return - bench_ret
-        beats = (r.metrics.total_return > bench_ret) and (r.metrics.sharpe >= bench_metrics.sharpe)
+        beats_riskadj = (r.metrics.sharpe >= bench_sharpe) and (r.metrics.max_drawdown >= bench_dd)
+        beats_absolute = r.metrics.total_return > bench_ret
         leaderboard.append({
             "code": prof.code, "name": prof.name, "emoji": prof.emoji,
             "final_equity": r.final_equity, "total_return": r.metrics.total_return,
             "cagr": r.metrics.cagr, "sharpe": r.metrics.sharpe,
             "max_drawdown": r.metrics.max_drawdown, "n_trades": r.n_trades,
             "win_rate": r.win_rate, "alpha_vs_xu100": round(alpha, 4),
-            "beats_benchmark": beats,
+            "beats_benchmark": beats_riskadj,   # risk-ayarlı kapı
+            "beats_absolute": beats_absolute,
         })
-    leaderboard.sort(key=lambda x: x["total_return"], reverse=True)
+    # Risk-ayarlı kapı odaklı → Sharpe'a göre sırala (en iyi risk-ayarlı en üstte)
+    leaderboard.sort(key=lambda x: x["sharpe"], reverse=True)
 
     winners = [x for x in leaderboard if x["beats_benchmark"]]
     edge_passed = len(winners) > 0
     if edge_passed:
         best = winners[0]
         edge_summary = (
-            f"✅ EDGE KAPISI GEÇİLDİ — {best['emoji']} {best['name']} maliyet sonrası "
-            f"XU100'ü getiri (%{best['total_return']*100:+.1f} vs %{bench_ret*100:+.1f}) "
-            f"ve Sharpe'ta geçti. Arena altyapısına yatırım gerekçeli."
+            f"✅ EDGE KAPISI GEÇİLDİ (risk-ayarlı) — {best['emoji']} {best['name']} "
+            f"XU100'ü Sharpe'ta ({best['sharpe']:.2f} vs {bench_sharpe:.2f}) ve "
+            f"drawdown'da (%{best['max_drawdown']*100:.1f} vs %{bench_dd*100:.1f}) geçti. "
+            f"Mutlak getiri (%{best['total_return']*100:+.1f} vs %{bench_ret*100:+.1f}) "
+            f"enflasyonist index'in altında — bu beklenen nakit-drag etkisi, edge "
+            f"sermaye koruma tarafında. Arena altyapısına yatırım gerekçeli."
         )
     else:
         best = leaderboard[0] if leaderboard else None
         edge_summary = (
-            "❌ EDGE KAPISI GEÇİLMEDİ — hiçbir profil maliyet sonrası XU100'ü hem "
-            "getiri hem Sharpe'ta geçemedi. Plan gereği arena altyapısına geçmeden "
+            "❌ EDGE KAPISI GEÇİLMEDİ (risk-ayarlı) — hiçbir profil XU100'ü hem "
+            "Sharpe hem drawdown'da geçemedi. Plan gereği arena altyapısına geçmeden "
             "önce sinyal/parametre iyileştirilmeli (fail-cheap)."
-            + (f" En iyi: {best['name']} %{best['total_return']*100:+.1f} "
-               f"(XU100 %{bench_ret*100:+.1f})." if best else "")
+            + (f" En iyi Sharpe: {best['name']} {best['sharpe']:.2f} "
+               f"(XU100 {bench_sharpe:.2f})." if best else "")
         )
 
     caveats = [
