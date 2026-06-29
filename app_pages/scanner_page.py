@@ -115,15 +115,16 @@ def _rows_to_df(rows: list[dict], sort_by_z: bool = False) -> pd.DataFrame:
         score = conf.get("score")
         out.append({
             "Hisse": r["ticker"].replace(".IS", ""),
-            "Kesitsel z": round(zmap[r["ticker"]], 2) if r["ticker"] in zmap else "—",
+            # Sayısal kolonlar string'e biçimlenir (float + "—" karışımı Arrow'u kırar).
+            "Kesitsel z": f"{zmap[r['ticker']]:.2f}" if r["ticker"] in zmap else "—",
             "Durum": STATUS_BADGE.get(r.get("status"), "—"),
             "Karar (v3)": conf.get("gated") or r.get("decision", "—"),
             "Güven": f"{score:.0f} · {conf.get('grade','')}" if score is not None else "—",
-            "Birleşik": round(r["combined_score"], 0) if r.get("combined_score") is not None else "—",
+            "Birleşik": f"{r['combined_score']:.0f}" if r.get("combined_score") is not None else "—",
             "Rasyo": f"{ratio} ({rscore:.0f})" if rscore is not None else ratio,
             "Mutabakat": AGREE_BADGE.get(agree_level_of(r), "—"),
             "Neden": explain_decision(r),
-            "Fiyat (TRY)": r.get("close") if r.get("close") is not None else "—",
+            "Fiyat (TRY)": f"{r['close']:.2f}" if r.get("close") is not None else "—",
             "Güncellenme": _age_text(r.get("ts")),
         })
     return pd.DataFrame(out)

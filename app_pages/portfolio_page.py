@@ -132,12 +132,14 @@ def _positions_table(positions: list, snaps: dict[str, dict]) -> None:
         rows.append({
             "Hisse": p.ticker.replace(".IS", ""),
             "Adet": p.quantity,
-            "Maliyet": p.avg_cost,
-            "Son Fiyat": p.last_price if p.last_price is not None else "—",
-            "Değer (TRY)": p.market_value if p.market_value is not None else "—",
-            "P&L (TRY)": round(p.pnl, 2) if p.pnl is not None else "—",
+            # Sayısal kolonlar string'e biçimlenir: float + "—" karışımı Arrow
+            # serileştirmesini kırıyordu (pyarrow "Expected bytes, got float").
+            "Maliyet": f"{p.avg_cost:.2f}" if p.avg_cost is not None else "—",
+            "Son Fiyat": f"{p.last_price:.2f}" if p.last_price is not None else "—",
+            "Değer (TRY)": f"{p.market_value:,.0f}" if p.market_value is not None else "—",
+            "P&L (TRY)": f"{p.pnl:+,.2f}" if p.pnl is not None else "—",
             "P&L %": pnl_text(p.pnl_pct),
-            "Ağırlık %": p.weight_pct if p.weight_pct is not None else "—",
+            "Ağırlık %": f"{p.weight_pct:.1f}" if p.weight_pct is not None else "—",
             "Durum": STATUS_BADGE.get(snap.get("status"), "—"),
             "Karar (v3)": conf.get("gated") or snap.get("decision", "—"),
             "Güven": f"{score:.0f} · {conf.get('grade','')}" if score is not None else "—",
