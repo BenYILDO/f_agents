@@ -186,6 +186,33 @@ def _supabase_save(state: ArenaState) -> bool:
         return False
 
 
+def supabase_diagnose() -> tuple[bool, str]:
+    """Supabase arena_state yaz+oku turunu dener ve GERÇEK hatayı döndürür.
+
+    UI teşhis butonu için: (ok, mesaj). Sessiz fallback'in gizlediği sorunu açar
+    (tablo yok / RLS / anahtar / şema). Probe satırı season_id='__selftest__'.
+    """
+    try:
+        from tradingagents.storage.supabase_client import SupabaseREST, is_configured
+    except Exception as e:  # noqa: BLE001
+        return False, f"Supabase istemcisi yüklenemedi: {e}"
+    if not is_configured():
+        return False, "Supabase secrets yok (SUPABASE_URL / SUPABASE_SERVICE_KEY)."
+    try:
+        rest = SupabaseREST()
+        rest.upsert(_TABLE, {
+            "season_id": "__selftest__", "state": {"probe": True},
+            "last_session": "selftest",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="season_id")
+        rows = rest.select(_TABLE, {"season_id": "eq.__selftest__", "limit": "1"})
+        if not rows:
+            return False, "Yazıldı ama geri okunamadı (RLS okuma engeli olabilir)."
+        return True, "Supabase yaz+oku başarılı ✓ (arena_state tablosu çalışıyor)."
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+
+
 def storage_backend() -> str:
     """Aktif kalıcılık katmanı — 'supabase' (kalıcı) ya da 'local' (geçici)."""
     try:

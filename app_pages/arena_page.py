@@ -181,7 +181,7 @@ def _render_live():
     from tradingagents.arena.config import DEFAULT_EXECUTION
     from tradingagents.arena.live import build_session_inputs, run_session
     from tradingagents.arena.state import (
-        D, load_state, new_state, save_state, storage_backend,
+        D, load_state, new_state, save_state, storage_backend, supabase_diagnose,
     )
 
     st.subheader("🔴 Canlı Sezon — bugünün sinyalleriyle ileriye işleyen arena")
@@ -189,11 +189,18 @@ def _render_live():
                "emirler ertesi seans açılışında (T+1) dolar, kasa/pozisyon/equity birikir.")
 
     backend = storage_backend()
-    if backend == "supabase":
-        st.success("💾 Kalıcılık: **Supabase** — sezon reboot'a dayanır.")
-    else:
-        st.warning("💾 Kalıcılık: **yerel (geçici)** — Streamlit reboot'unda sıfırlanır. "
-                   "Kalıcı olması için Supabase secrets + `arena_state` tablosu gerekir.")
+    cda, cdb = st.columns([2, 1])
+    with cda:
+        if backend == "supabase":
+            st.success("💾 Kalıcılık: **Supabase** — sezon reboot'a dayanır. "
+                       "(Veri yalnız seans çalıştırınca yazılır.)")
+        else:
+            st.warning("💾 Kalıcılık: **yerel (geçici)** — secrets okunamadı. "
+                       "Supabase secrets + `arena_state` tablosu gerekir.")
+    with cdb:
+        if st.button("🔍 Supabase'i test et", use_container_width=True):
+            ok, msg = supabase_diagnose()
+            (st.success if ok else st.error)(msg)
 
     state = load_state() or new_state()
 
