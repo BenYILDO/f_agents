@@ -177,12 +177,116 @@ def _render_profiles():
             "sonraki sezon parayla girer (plan F0.6 — kilitli karar).")
 
 
+def _render_live():
+    from tradingagents.arena.config import DEFAULT_EXECUTION
+    from tradingagents.arena.live import build_session_inputs, run_session
+    from tradingagents.arena.state import D, load_state, new_state, save_state
+
+    st.subheader("🔴 Canlı Sezon — bugünün sinyalleriyle ileriye işleyen arena")
+    st.caption("Her seansta gerçek analiz (güven+rejim+makro şok+p_up) emir üretir, "
+               "emirler ertesi seans açılışında (T+1) dolar, kasa/pozisyon/equity birikir. "
+               "Yerel JSON'da saklanır (Supabase gerekmez).")
+
+    state = load_state() or new_state()
+
+    c1, c2, c3 = st.columns([1.4, 1, 1])
+    with c1:
+        run = st.button("▶️ Bugünün seansını çalıştır", type="primary",
+                        use_container_width=True)
+    with c2:
+        st.metric("Sezon", state.season_id)
+    with c3:
+        st.metric("Son seans", state.last_session or "—")
+
+    if st.button("🔄 Sezonu sıfırla (tüm kasaları 100k'ya döndür)"):
+        save_state(new_state())
+        st.success("Sezon sıfırlandı.")
+        st.rerun()
+
+    if run:
+        prog = st.progress(0.0, text="Bugünün sinyalleri üretiliyor (analyze_universe)…")
+        try:
+            outcomes, prices, session = build_session_inputs()
+            prog.progress(0.7, text=f"Seans {session} işleniyor…")
+            report = run_session(state, outcomes, prices, session, DEFAULT_EXECUTION)
+            save_state(state)
+            prog.empty()
+            if report.skipped:
+                st.info(f"Seans {session} zaten işlenmiş (idempotent — yeni emir üretilmedi).")
+            else:
+                st.success(f"Seans {session}: {report.filled} emir doldu · "
+                           f"{report.new_orders} yeni emir kuyruğa girdi · "
+                           f"{report.predictions} observer tahmini.")
+        except Exception as e:  # noqa: BLE001
+            prog.empty()
+            st.error(f"Seans çalıştırılamadı: {type(e).__name__}: {e}")
+            return
+        state = load_state() or state
+
+    # ── Canlı lig tablosu ──────────────────────────────────────────────────
+    init_cap = D(DEFAULT_EXECUTION.initial_capital)
+    rows = []
+    for code, acc in state.accounts.items():
+        prof = PROFILES.get(code)
+        last_eq = D(acc.equity_history[-1]["equity"]) if acc.equity_history else acc.cash
+        ret = (last_eq / init_cap - 1) * 100 if init_cap else D(0)
+        rows.append({
+            "": prof.emoji if prof else "",
+            "Hesap": prof.name if prof else code,
+            "Tür": "OBSERVER" if acc.status == "OBSERVER" else "PARA",
+            "Kasa+Pozisyon (TL)": f"{float(last_eq):,.0f}",
+            "Getiri": f"%{float(ret):+.1f}",
+            "Nakit (TL)": f"{float(acc.cash):,.0f}",
+            "Pozisyon": str(len(acc.positions)),
+            "Bekleyen emir": str(len(acc.pending_orders)),
+        })
+    st.markdown("##### 🏆 Canlı lig")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("⏳ İlk seansta hesaplar emir kuyruğa alır (T+1) — pozisyonlar ertesi "
+               "seans açılışında oluşur. Her gün bir kez çalıştır (ya da cron).")
+
+    # ── Hesap detayları ────────────────────────────────────────────────────
+    for code, acc in state.accounts.items():
+        prof = PROFILES.get(code)
+        if acc.status == "OBSERVER":
+            continue
+        title = f"{prof.emoji if prof else ''} {prof.name if prof else code}"
+        with st.expander(f"{title} — {len(acc.positions)} pozisyon · "
+                         f"{len(acc.pending_orders)} bekleyen"):
+            if acc.positions:
+                st.markdown("**Açık pozisyonlar**")
+                st.dataframe(pd.DataFrame([{
+                    "Hisse": p.ticker.replace(".IS", ""), "Adet": p.quantity,
+                    "Maliyet": f"{float(p.avg_cost):.2f}", "Stop": f"{float(p.stop):.2f}",
+                    "Hedef": f"{float(p.target):.2f}", "Giriş seansı": p.opened_session,
+                } for p in acc.positions.values()]), use_container_width=True, hide_index=True)
+            if acc.pending_orders:
+                st.markdown("**Bekleyen emirler (ertesi açılışta dolacak)**")
+                st.dataframe(pd.DataFrame([{
+                    "Hisse": o.ticker.replace(".IS", ""), "Yön": o.side,
+                    "Adet": o.quantity, "Sebep": o.reason,
+                } for o in acc.pending_orders]), use_container_width=True, hide_index=True)
+            if not acc.positions and not acc.pending_orders:
+                st.caption("Henüz pozisyon/emir yok.")
+
+    # ── Observer karne ─────────────────────────────────────────────────────
+    if state.predictions:
+        with st.expander(f"🤖 ML Observer karnesi — {len(state.predictions)} tahmin"):
+            st.caption("Para harcamaz; kalibre p_up tahminleri biriktirir. Horizon "
+                       "(10g) dolunca gerçekleşen fiyatla değerlendirilir (karne).")
+            recent = state.predictions[-15:]
+            st.dataframe(pd.DataFrame([{
+                "Seans": p["session"], "Hisse": p["ticker"].replace(".IS", ""),
+                "p_up": f"%{p['p_up']*100:.0f}", "Karar": p["decision"],
+            } for p in recent]), use_container_width=True, hide_index=True)
+
+
 def render() -> None:
     st.title("🏟️ Paper Arena")
     st.caption("Eşit kasayla yarışan kâğıt hesaplar · XU100 edge kapısı · "
                "LLM yok, ücretsiz · Yatırım tavsiyesi değildir.")
 
-    tab1, tab2 = st.tabs(["🎯 Edge Kapısı & Lig", "👥 Hesaplar"])
+    tab1, tab2, tab3 = st.tabs(["🎯 Edge Kapısı & Lig", "🔴 Canlı Sezon", "👥 Hesaplar"])
     with tab1:
         # Önceki sonucu hatırla (sayfa yenilenince kaybolmasın)
         cached = st.session_state.get("arena_replay")
@@ -191,4 +295,6 @@ def render() -> None:
                 _show_replay_result(cached)
         _render_replay()
     with tab2:
+        _render_live()
+    with tab3:
         _render_profiles()

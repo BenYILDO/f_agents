@@ -221,3 +221,7 @@ __marimo__/
 # Enterprise env file (secrets) and generated run reports
 .env.enterprise
 reports/
+
+# Paper Arena yerel canlı durum (kullanıcıya özel, commit edilmez)
+/data/arena_state.json
+/data/arena_state.json.tmp
