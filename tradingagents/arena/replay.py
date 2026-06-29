@@ -44,6 +44,12 @@ class ArenaReplayResult:
     period: str = ""
     caveats: list = field(default_factory=list)
     error: str = ""
+    # Eğitim/test (kronolojik 80/20 holdout) — overfitting koruması
+    split_session: str = ""
+    train_frac: float = 0.8
+    robust_summary: str = ""
+    equalweight_metrics: PerfMetrics = field(default_factory=PerfMetrics)
+    equalweight_equity: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
 
 
 def _atr(df: pd.DataFrame, n: int = _ATR_LEN) -> pd.Series:
@@ -71,16 +77,48 @@ def _prepare_ticker(df: pd.DataFrame) -> pd.DataFrame | None:
     return sig[keep].copy()
 
 
+def _equalweight_equity(data: dict, dates, initial: float, slippage_bps: float) -> pd.Series:
+    """1 dönem önce BIST evrenini eşit böl-tut benchmark'ı (naif çeşitlendirme).
+
+    İlk barda kasayı tüm hisselere eşit dağıtıp tutar; kullanıcının "aynı hisselerin
+    dağılımını yapalım" dediği sezgisel kıyas. XU100'den farkı: eşit-ağırlık.
+    """
+    n = len(data)
+    if n == 0:
+        return pd.Series(dtype=float)
+    per = initial / n
+    slip = 1.0 + slippage_bps / 10_000.0
+    total = pd.Series(0.0, index=dates)
+    for df in data.values():
+        c = df["Close"].reindex(dates).ffill()
+        first_valid = c.first_valid_index()
+        if first_valid is None or c.loc[first_valid] <= 0:
+            continue
+        units = per / (c.loc[first_valid] * slip)
+        total = total.add((units * c).fillna(0.0), fill_value=0.0)
+    return total
+
+
+def _segment_metrics(equity: pd.Series, split_idx: int):
+    """Equity eğrisini eğitim (ilk %80) / test (son %20) diye böler → (train, test)."""
+    if equity is None or len(equity) < 4:
+        return PerfMetrics(), PerfMetrics()
+    split_idx = max(2, min(split_idx, len(equity) - 2))
+    return compute_metrics(equity.iloc[:split_idx]), compute_metrics(equity.iloc[split_idx:])
+
+
 def run_arena_replay(
     tickers: list[str] | None = None,
     period: str = "5y",
     cfg: ExecutionConfig = DEFAULT_EXECUTION,
+    train_frac: float = 0.8,
     progress=None,
 ) -> ArenaReplayResult:
-    """Aktif profilleri tarihsel veride koşturup XU100 ile kıyaslar.
+    """Aktif profilleri tarihsel veride koşturup XU100 + eşit-ağırlık ile kıyaslar.
 
-    ``progress(frac, text)`` opsiyonel geri-çağrısı UI ilerleme çubuğu içindir.
-    Asla istisna fırlatmaz; başarısız ticker'lar atlanır.
+    Kronolojik ``train_frac`` (varsayılan %80) holdout: ilk %80 'eğitim/in-sample',
+    son %20 'test/görülmemiş'. Her iki segmentte de iyi olan profil dayanıklıdır
+    (overfit değil). ``progress(frac, text)`` UI ilerleme çubuğu içindir.
     """
     from tradingagents.analytics.composite import _fetch_daily
     from tradingagents.strategy.dip_signal import BIST30
@@ -117,9 +155,16 @@ def run_arena_replay(
     if not data:
         return ArenaReplayResult(ok=False, error="Hiç hisse verisi hazırlanamadı.")
 
-    # ── Benchmark equity ───────────────────────────────────────────────────
+    # ── Benchmark equity (XU100 + eşit-ağırlık BIST) ───────────────────────
     bench_eq = benchmark_buy_hold(xu["Close"], cfg.initial_capital, cfg.slippage_bps)
     bench_metrics = compute_metrics(bench_eq)
+    ew_eq = _equalweight_equity(data, dates, cfg.initial_capital, cfg.slippage_bps)
+    ew_metrics = compute_metrics(ew_eq)
+
+    # ── Eğitim/test bölme noktası (kronolojik %80) ─────────────────────────
+    split_idx = int(len(dates) * train_frac)
+    split_session = str(pd.Timestamp(dates[min(split_idx, len(dates) - 1)]).date())
+    bench_train, bench_test = _segment_metrics(bench_eq, split_idx)
 
     # ── Her aktif profili koştur ───────────────────────────────────────────
     profiles = active_profiles()
@@ -138,23 +183,34 @@ def run_arena_replay(
     bench_ret = bench_metrics.total_return
     bench_sharpe = bench_metrics.sharpe
     bench_dd = bench_metrics.max_drawdown
+    def _beats(m, bench_m) -> bool:
+        return (m.sharpe >= bench_m.sharpe) and (m.max_drawdown >= bench_m.max_drawdown)
+
     leaderboard = []
     for prof in profiles:
         r = per_profile[prof.code]
         alpha = r.metrics.total_return - bench_ret
-        beats_riskadj = (r.metrics.sharpe >= bench_sharpe) and (r.metrics.max_drawdown >= bench_dd)
+        beats_riskadj = _beats(r.metrics, bench_metrics)
         beats_absolute = r.metrics.total_return > bench_ret
+        # Eğitim/test holdout — overfitting kontrolü
+        tr_m, te_m = _segment_metrics(r.equity_curve, split_idx)
+        beats_train = _beats(tr_m, bench_train)
+        beats_test = _beats(te_m, bench_test)
+        robust = beats_train and beats_test   # her iki segmentte de iyi = dayanıklı
         leaderboard.append({
             "code": prof.code, "name": prof.name, "emoji": prof.emoji,
             "final_equity": r.final_equity, "total_return": r.metrics.total_return,
             "cagr": r.metrics.cagr, "sharpe": r.metrics.sharpe,
             "max_drawdown": r.metrics.max_drawdown, "n_trades": r.n_trades,
             "win_rate": r.win_rate, "alpha_vs_xu100": round(alpha, 4),
-            "beats_benchmark": beats_riskadj,   # risk-ayarlı kapı
-            "beats_absolute": beats_absolute,
+            "beats_benchmark": beats_riskadj, "beats_absolute": beats_absolute,
+            "train_return": tr_m.total_return, "train_sharpe": tr_m.sharpe,
+            "test_return": te_m.total_return, "test_sharpe": te_m.sharpe,
+            "test_max_drawdown": te_m.max_drawdown,
+            "beats_train": beats_train, "beats_test": beats_test, "robust": robust,
         })
-    # Risk-ayarlı kapı odaklı → Sharpe'a göre sırala (en iyi risk-ayarlı en üstte)
-    leaderboard.sort(key=lambda x: x["sharpe"], reverse=True)
+    # Test (görülmemiş) Sharpe'ına göre sırala — en dayanıklı en üstte
+    leaderboard.sort(key=lambda x: x["test_sharpe"], reverse=True)
 
     winners = [x for x in leaderboard if x["beats_benchmark"]]
     edge_passed = len(winners) > 0
@@ -178,7 +234,30 @@ def run_arena_replay(
                f"(XU100 {bench_sharpe:.2f})." if best else "")
         )
 
+    # ── Dayanıklılık verdisi (overfitting kontrolü) ────────────────────────
+    robust_list = [x for x in leaderboard if x["robust"]]
+    oos_leader = leaderboard[0] if leaderboard else None   # test Sharpe'ına göre sıralı
+    if robust_list:
+        r0 = robust_list[0]
+        robust_summary = (
+            f"🛡️ DAYANIKLI (overfit değil): {r0['emoji']} {r0['name']} — hem eğitim "
+            f"(ilk %{int(train_frac*100)}) hem görülmemiş test (son %{int((1-train_frac)*100)}) "
+            f"döneminde XU100'ü risk-ayarlı geçti. Test getirisi %{r0['test_return']*100:+.1f}, "
+            f"test Sharpe {r0['test_sharpe']:.2f}. İzlenecek aday bu."
+        )
+    elif oos_leader:
+        robust_summary = (
+            f"⚠️ DAYANIKLI PROFİL YOK — hiçbiri her iki segmentte de XU100'ü geçmedi "
+            f"(muhtemel overfit/rejime bağlılık). Test döneminde en iyi: {oos_leader['name']} "
+            f"(getiri %{oos_leader['test_return']*100:+.1f}, Sharpe {oos_leader['test_sharpe']:.2f}). "
+            f"Tek başına bir döneme güvenme."
+        )
+    else:
+        robust_summary = ""
+
     caveats = [
+        f"Eğitim/test 80/20 holdout: bölme {split_session}. Eğitimde iyi olup testte "
+        "çöken profil overfit/şanslıdır; her ikisinde iyi olan dayanıklıdır.",
         "Survivorship: bugünkü BIST30 listesi geçmişe uygulandı (dönemsel üyelik yok).",
         "Rejim filtresi = XU100 200 günlük ortalama proxy'si (HMM değil).",
         "Sinyal = dip-stratejisi nedensel buy/sell + ATR(14) stop/hedef.",
@@ -192,4 +271,6 @@ def run_arena_replay(
         benchmark_metrics=bench_metrics, leaderboard=leaderboard,
         edge_gate_passed=edge_passed, edge_summary=edge_summary,
         n_tickers=len(data), period=period, caveats=caveats,
+        split_session=split_session, train_frac=train_frac, robust_summary=robust_summary,
+        equalweight_metrics=ew_metrics, equalweight_equity=ew_eq,
     )

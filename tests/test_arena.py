@@ -286,3 +286,11 @@ class TestReplayOrkestrasyon:
         for code, r in result.per_profile.items():
             assert r.ok
             assert len(r.equity_curve) == result.benchmark_metrics.n_days
+        # eğitim/test holdout alanları üretilmiş olmalı (overfitting kontrolü)
+        assert result.split_session
+        assert result.train_frac == 0.8
+        assert len(result.equalweight_equity) > 0
+        for x in result.leaderboard:
+            for k in ("train_return", "test_return", "test_sharpe", "robust",
+                      "beats_train", "beats_test"):
+                assert k in x

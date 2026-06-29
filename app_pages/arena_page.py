@@ -30,6 +30,8 @@ def _equity_chart(result):
             frames.append(s)
     if len(result.benchmark_equity):
         frames.append(result.benchmark_equity.rename("📊 XU100 (al-tut)"))
+    if len(getattr(result, "equalweight_equity", [])):
+        frames.append(result.equalweight_equity.rename("⚖️ Eşit-ağırlık BIST"))
     if not frames:
         return None
     wide = pd.concat(frames, axis=1).ffill()
@@ -43,8 +45,9 @@ def _render_replay():
 
     c1, c2, c3 = st.columns([1.3, 1, 1])
     with c1:
-        period = st.selectbox("Tarihsel pencere", ["3y", "5y", "10y"], index=1,
-                              help="Daha uzun = daha çok rejim, daha yavaş.")
+        period = st.selectbox("Tarihsel pencere", ["1y", "2y", "3y", "5y", "10y"], index=1,
+                              help="İlk %80 eğitim, son %20 görülmemiş test. "
+                                   "Daha uzun = daha çok rejim, daha yavaş.")
     with c2:
         st.metric("Komisyon", f"{DEFAULT_EXECUTION.commission_bps:.0f} bps")
     with c3:
@@ -79,39 +82,58 @@ def _show_replay_result(result):
     st.caption(f"{result.n_tickers} hisse · pencere {result.period} · "
                f"XU100 getiri %{bm0.total_return*100:+.1f} · Sharpe {bm0.sharpe:.2f} · "
                f"Maks DD %{bm0.max_drawdown*100:.1f}")
-    st.info("ℹ️ **Edge kapısı risk-ayarlıdır:** %940'lık enflasyonist index'i mutlak "
-            "getiride geçmek yanlış bardır (nakit-drag + overfit riski). Kapı **Sharpe + "
-            "drawdown**'a bakar: index kadar verimli ama daha az sancı = gerçek edge. "
-            "Mutlak getiri yine de şeffaflık için tabloda.")
 
-    # Lig tablosu
-    st.markdown("##### 🏆 Lig tablosu (Sharpe'a göre)")
+    # Dayanıklılık verdisi (overfitting kontrolü) — kullanıcının asıl istediği
+    if result.robust_summary:
+        if result.robust_summary.startswith("🛡️"):
+            st.success(result.robust_summary)
+        else:
+            st.warning(result.robust_summary)
+    st.caption(f"📐 Eğitim/test bölme noktası: {result.split_session} "
+               f"(ilk %{int(result.train_frac*100)} eğitim · son "
+               f"%{int((1-result.train_frac)*100)} görülmemiş test)")
+
+    st.info("ℹ️ **Edge kapısı risk-ayarlıdır** (Sharpe + drawdown); enflasyonist index'i "
+            "mutlak getiride geçmek yanlış bardır. **Dayanıklı** = hem eğitimde hem "
+            "görülmemiş testte XU100'ü geçen → overfit değil, izlenecek aday.")
+
+    # Lig tablosu — test (görülmemiş) Sharpe'ına göre sıralı
+    st.markdown("##### 🏆 Lig tablosu — görülmemiş test dönemine göre sıralı")
     rows = []
     for x in result.leaderboard:
         rows.append({
             "": x["emoji"],
             "Hesap": x["name"],
-            "Kasa (TL)": f"{x['final_equity']:,.0f}",
-            "Getiri": f"%{x['total_return']*100:+.1f}",
-            "XU100'e karşı": f"%{x['alpha_vs_xu100']*100:+.1f}",
-            "CAGR": f"%{x['cagr']*100:+.1f}",
-            "Sharpe": f"{x['sharpe']:.2f}",
-            "Maks DD": f"%{x['max_drawdown']*100:.1f}",
-            "İşlem": str(x["n_trades"]),   # str: XU100 satırı "—" ile karışınca Arrow kırılır
-            "İsabet": f"%{x['win_rate']*100:.0f}",
-            "Risk-ayarlı XU100>?": "✅" if x["beats_benchmark"] else "—",
+            "Tüm dönem getiri": f"%{x['total_return']*100:+.1f}",
+            "Eğitim getiri": f"%{x['train_return']*100:+.1f}",
+            "Test getiri": f"%{x['test_return']*100:+.1f}",
+            "Test Sharpe": f"{x['test_sharpe']:.2f}",
+            "Test Maks DD": f"%{x['test_max_drawdown']*100:.1f}",
+            "İşlem": str(x["n_trades"]),
+            "Eğitim>XU?": "✅" if x["beats_train"] else "—",
+            "Test>XU?": "✅" if x["beats_test"] else "—",
+            "🛡️ Dayanıklı": "✅" if x["robust"] else "—",
         })
-    # XU100 referans satırı
+    # XU100 + eşit-ağırlık referans satırları
     bm = result.benchmark_metrics
+    ew = result.equalweight_metrics
     rows.append({
         "": "📊", "Hesap": "XU100 (al-tut)",
-        "Kasa (TL)": f"{result.benchmark_equity.iloc[-1]:,.0f}" if len(result.benchmark_equity) else "—",
-        "Getiri": f"%{bm.total_return*100:+.1f}", "XU100'e karşı": "—",
-        "CAGR": f"%{bm.cagr*100:+.1f}", "Sharpe": f"{bm.sharpe:.2f}",
-        "Maks DD": f"%{bm.max_drawdown*100:.1f}", "İşlem": "—", "İsabet": "—",
-        "Risk-ayarlı XU100>?": "—",
+        "Tüm dönem getiri": f"%{bm.total_return*100:+.1f}", "Eğitim getiri": "—",
+        "Test getiri": "—", "Test Sharpe": f"{bm.sharpe:.2f}",
+        "Test Maks DD": f"%{bm.max_drawdown*100:.1f}", "İşlem": "—",
+        "Eğitim>XU?": "—", "Test>XU?": "—", "🛡️ Dayanıklı": "—",
+    })
+    rows.append({
+        "": "⚖️", "Hesap": "Eşit-ağırlık BIST (böl-tut)",
+        "Tüm dönem getiri": f"%{ew.total_return*100:+.1f}", "Eğitim getiri": "—",
+        "Test getiri": "—", "Test Sharpe": f"{ew.sharpe:.2f}",
+        "Test Maks DD": f"%{ew.max_drawdown*100:.1f}", "İşlem": "—",
+        "Eğitim>XU?": "—", "Test>XU?": "—", "🛡️ Dayanıklı": "—",
     })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("**Test getiri/Sharpe** = son %20 (görülmemiş) dönem — overfitting'in "
+               "gerçek sınavı. **🛡️ Dayanıklı** = hem eğitimde hem testte XU100'ü geçen.")
 
     # Equity eğrileri
     st.markdown("##### 📈 Kasa eğrileri")
