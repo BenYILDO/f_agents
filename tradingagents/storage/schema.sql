@@ -106,6 +106,42 @@ alter table model_cache add column if not exists rejection_reasons  jsonb;
 alter table model_cache add column if not exists model_version      text;
 alter table model_cache add column if not exists trained_until      text;
 
+-- ── Havuz modeli deposu (S2) ─────────────────────────────────────────────
+-- Gecelik iş, tüm evreni tek panelde eğiten pooled modeli burada saklar:
+-- artefakt (pickle+zlib+base64) + kalite karnesi. Her eğitim YENİ satırdır
+-- (tarihçe birikir); tüketiciler en son quality_passed satırı yükler ve gün
+-- içinde yalnız tahmin yapar — model her gün baştan eğitilmez.
+create table if not exists pooled_models (
+    id                 bigint generated always as identity primary key,
+    model_version      text        not null,
+    trained_at         timestamptz not null default now(),
+    trained_until      text,
+    horizon            int,
+    threshold          numeric,
+    universe_size      int,
+    universe           jsonb       not null default '[]'::jsonb,
+    n_samples          int,
+    n_test             int,
+    auc                numeric,
+    brier_raw          numeric,
+    brier_calibrated   numeric,
+    brier_skill_score  numeric,
+    quality_passed     boolean     not null default false,
+    rejection_reasons  jsonb       not null default '[]'::jsonb,
+    feature_importance jsonb       not null default '{}'::jsonb,
+    artifact           text,
+    meta               jsonb       not null default '{}'::jsonb
+);
+create index if not exists pooled_models_version_ts_idx
+    on pooled_models (model_version, trained_at desc);
+
+-- Challenger tahminleri: pooled modelin ticker başına güncel kazanma olasılığı,
+-- mevcut per-ticker şampiyonun YANINA yazılır (davranışı değiştirmez; karne
+-- biriktirir — champion/challenger disiplini, plan §S2/S4).
+alter table model_cache add column if not exists p_up_pooled     numeric;
+alter table model_cache add column if not exists pooled_version  text;
+alter table model_cache add column if not exists pooled_quality  boolean;
+
 -- ════════════════════════════════════════════════════════════════════════
 -- Güvenlik (RLS) — tek kullanıcılı kurulum
 -- ────────────────────────────────────────────────────────────────────────
@@ -121,6 +157,7 @@ alter table analysis_snapshots enable row level security;
 alter table ai_runs            enable row level security;
 alter table watchlist          enable row level security;
 alter table model_cache        enable row level security;
+alter table pooled_models      enable row level security;
 
 -- ════════════════════════════════════════════════════════════════════════
 -- Saklama (retention) — Supabase free tier 500 MB; saatlik satırlar birikir.

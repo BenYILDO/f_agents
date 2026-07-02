@@ -88,6 +88,13 @@ Bu özellik için **`schema.sql`'i tekrar çalıştır** (idempotent; `model_cac
 tablosunu ekler). Gecelik iş çalışmasa bile saatlik analiz ve güven skoru
 (kalibre olasılık olmadan) sorunsuz çalışır.
 
+**S2 — havuz (pooled) modeli:** aynı gecelik iş, tüm evreni tek panelde eğiten
+havuz modelini de eğitir; eğitilmiş artefakt + kalite karnesi `pooled_models`
+tablosuna, ticker başına challenger tahmini `model_cache.p_up_pooled` kolonuna
+yazılır. Model böylece Supabase'de **kalıcıdır**: gün içi işler yalnız tahmin
+yapar, her gün baştan eğitilmez. Bu tablo/kolonlar için de `schema.sql`'i tekrar
+çalıştırmak yeterlidir; havuz adımı başarısız olursa gecelik işin kalanı etkilenmez.
+
 ---
 
 ## Sorun giderme

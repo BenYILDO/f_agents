@@ -2392,3 +2392,37 @@ Kullanıcı onayı ("kodla") ile S1 uygulandı:
 
 **Sonraki adım (S2):** pooled BIST100 panel modeli + Supabase model deposu
 (gecelik eğitim, gün içi yalnız tahmin). S1 etiketleyicisi S2'nin girdisidir.
+
+---
+
+## Claude — 2026-07-02 · S2 TAMAMLANDI (havuz modeli + Supabase model deposu)
+
+- **`ml/pooled.py`**: tüm evren tek panelde (`build_panel` — MultiIndex
+  [date, ticker], S1 üçlü-bariyer etiketi, XU100-relatif). Özellik seti = mevcut
+  16 ölçek-bağımsız kolon + **kesitsel** kolonlar (aynı-gün evren-içi z-skorlar:
+  momentum/vol/RSI/zirveye-uzaklık + endekse-relatif 20g momentum; yalnız
+  aynı-gün bilgisi → nedensel). Doğrulama **purged walk-forward**: eğitim sonu
+  ile test başı arasında `horizon+1` günlük embargo — eğitim etiketlerinin
+  ileri-bakan penceresi test dönemine taşamaz (López de Prado §7). Kalibrasyon
+  F0.2 disiplini (erken %70 Platt, geç %30 dokunulmamış test, aynı
+  `validate_model_evidence` kapısı). `POOLED_MODEL_VERSION="pooled-v1-tb-purged"`.
+- **Kalıcılık (kullanıcının kök talebi)**: `storage/pooled_models.py` +
+  `pooled_models` tablosu — artefakt (pickle+zlib+base64, ~66KB) + karne; her
+  eğitim yeni satır (tarihçe birikir). `load_latest(require_quality=True)`
+  otomatik-işlem tüketicileri içindir. Gün içinde yalnız `predict_pooled`
+  (indir + tahmin); yeniden eğitim yok.
+- **Champion/challenger**: gecelik iş (`run_nightly_models.py`) per-ticker
+  şampiyonu aynen yazar; havuz modeli **challenger** olarak
+  `model_cache.p_up_pooled / pooled_version / pooled_quality` kolonlarına gider.
+  Canlı davranış değişmez; karne birikir → S4'te (meta-labeling) hangisinin
+  ikincil filtre olacağına kanıtla karar verilir. Havuz adımı başarısız olursa
+  gecelik işin kalanı etkilenmez (try/except + şema-eksik mesajı).
+- **Testler** (`tests/test_pooled.py`, 8): panel kurulumu + kesitsel z'nin
+  gün-içi ortalamasının 0 olması, embargo boşluğunun doğrulanması, uçtan uca
+  eğitim + kanıt alanları, tahmin aralığı, artefakt gidiş-dönüşünün birebir aynı
+  tahmini vermesi, bozuk artefaktın sessiz boş dönmesi, küçük panelin gürültüyle
+  reddi. Kuru koşu: sentetik gürültüde kalite kapısı dürüstçe GEÇEMEDİ dedi
+  (beklenen davranış — kapı çalışıyor).
+
+**Sonraki adım (S3):** USDTRY/altın/rejim-HMM/mum-formasyon bitlerinin panele
+özellik olarak eklenmesi; ardından S4 meta-labeling.
