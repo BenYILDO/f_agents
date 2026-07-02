@@ -1,11 +1,13 @@
-"""🤖 ML Sinyal ekranı — hissenin geçmişinden eğitilen yön-tahmin modeli.
+"""🤖 ML Sinyal ekranı — hissenin geçmişinden eğitilen işlem-sonucu modeli.
 
 Deterministik analiz motorunun özelliklerinden bir gradient-boosting
 sınıflandırıcı eğitir, zaman-serisi backtest ile isabetini ölçer ve güncel bar
-için yukarı olasılığını + sinyal üretir. Model talep anında eğitilir (önceden
-paketlenmiş ağırlık yok). Skill = backtest doğruluğu − taban (çoğunluk sınıfı):
-pozitif skill, modelin sadece trendi ezberlemenin ötesinde değer kattığını
-gösterir.
+için kazanma olasılığını + sinyal üretir. Etiket üçlü-bariyerdir (S1): model
+"N gün sonra yukarı mı?" değil, "bu barda açılan ATR stop/hedefli işlem
+maliyet-sonrası XU100'e göre kazanır mı?" sorusunu öğrenir. Model talep anında
+eğitilir (önceden paketlenmiş ağırlık yok). Skill = backtest doğruluğu − taban
+(çoğunluk sınıfı): pozitif skill, modelin trendi ezberlemenin ötesinde değer
+kattığını gösterir.
 """
 
 from __future__ import annotations
@@ -25,19 +27,21 @@ _SIGNAL_STYLE = {
 
 
 def render() -> None:
-    st.title("🤖 ML Sinyal — Yön Tahmini")
-    st.caption("Hissenin kendi geçmişinden eğitilen sınıflandırıcı + zaman-serisi backtest · "
+    st.title("🤖 ML Sinyal — İşlem Sonucu Tahmini")
+    st.caption("Üçlü-bariyer etiket (ATR stop/hedef + T+1 fill + maliyet, XU100-relatif) · "
                "Eğitim talep anında yapılır · Yatırım tavsiyesi değildir.")
 
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         ticker = st.text_input("Sembol", value="THYAO.IS", key="ml_ticker").strip().upper()
     with c2:
-        horizon = st.number_input("Ufuk (gün)", min_value=1, max_value=60, value=10, step=1,
-                                  help="Kaç gün sonrasının yönü tahmin edilsin.")
+        horizon = st.number_input("Maks tutma (gün)", min_value=1, max_value=60, value=10,
+                                  step=1, help="Süre bariyeri: stop/hedef görülmezse işlem "
+                                               "bu kadar gün sonra kapatılmış sayılır.")
     with c3:
         threshold = st.number_input("Eşik (%)", min_value=0.0, max_value=20.0, value=0.0,
-                                    step=0.5, help="Bu getirinin üstü 'yukarı' sayılır.")
+                                    step=0.5, help="Maliyet-sonrası XU100-relatif getiri "
+                                                   "bu değerin üstündeyse 'kazandı' sayılır.")
     with c4:
         st.write(""); st.write("")
         run = st.button("🧠 Eğit & Tahmin", type="primary", use_container_width=True,
@@ -50,8 +54,11 @@ def render() -> None:
 
     with st.spinner(f"{ticker} verisi çekiliyor ve model eğitiliyor…"):
         df = _fetch_daily(ticker, period="10y")
+        xu = _fetch_daily("XU100.IS", period="10y")
+        bench = xu["Close"] if xu is not None and not xu.empty else None
         res = train_signal_model(df, ticker=ticker, horizon=int(horizon),
-                                 threshold=threshold / 100.0) if df is not None else None
+                                 threshold=threshold / 100.0,
+                                 benchmark=bench) if df is not None else None
 
     if res is None or not res.ok:
         st.error((res.reason if res else "") or "Yeterli veri alınamadı.")
@@ -63,9 +70,9 @@ def render() -> None:
         f"<div style='padding:16px 20px;border-radius:12px;background:{color}1a;"
         f"border:2px solid {color};'>"
         f"<span style='font-size:13px;color:{color};font-weight:600;'>ML SİNYAL · {ticker} · "
-        f"{res.horizon} gün</span><br>"
+        f"maks {res.horizon} gün · üçlü-bariyer</span><br>"
         f"<span style='font-size:30px;font-weight:800;color:{color};'>{emoji} {res.signal} "
-        f"<span style='font-size:18px;font-weight:600;'>(yukarı olasılığı {prob_txt})</span></span></div>",
+        f"<span style='font-size:18px;font-weight:600;'>(kazanma olasılığı {prob_txt})</span></span></div>",
         unsafe_allow_html=True,
     )
 

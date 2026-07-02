@@ -16,6 +16,8 @@ from tradingagents.ml.features import (
     build_feature_frame,
     build_training_set,
     make_labels,
+    make_labels_triple_barrier,
+    triple_barrier_outcomes,
 )
 from tradingagents.ml.model import train_signal_model
 
@@ -63,6 +65,83 @@ class TestFeatures:
         X, y = build_training_set(_learnable_df(n=500), horizon=10)
         assert len(X) == len(y) and len(X) > 0
         assert not X.isna().any(axis=None)
+
+
+def _tb_df(scenario, n_flat=30):
+    """Düz (O=100, H=101, L=99, C=100 → ATR≈2) ısınma + senaryo barları.
+
+    Düz barlarda stop = 100 − 2·2 = 96, hedef = 100 + 2·2·2 = 108 olur; senaryo
+    barları bu bariyerlere göre kurgulanır. ``scenario``: (O, H, L, C) listesi.
+    """
+    rows = [(100.0, 101.0, 99.0, 100.0)] * n_flat + list(scenario)
+    idx = pd.bdate_range("2022-01-03", periods=len(rows))
+    o, h, l, c = zip(*rows)
+    return pd.DataFrame({"Open": o, "High": h, "Low": l, "Close": c,
+                         "Volume": 1_000_000.0}, index=idx)
+
+
+@pytest.mark.unit
+class TestTripleBarrier:
+    """S1: etiket motorun fiziğiyle (T+1 fill, ATR stop/hedef, maliyet) hizalı."""
+
+    T = 29  # son düz bar = sinyal barı (stop 96 / hedef 108)
+
+    def test_target_hit_labels_one(self):
+        df = _tb_df([(100, 103, 99.5, 102), (102, 109, 101, 108), (108, 109, 107, 108)])
+        out = triple_barrier_outcomes(df, max_hold=10)
+        row = out.iloc[self.T]
+        assert row["exit_reason"] == "hedef"
+        assert row["label"] == 1.0 and row["net_ret"] > 0
+        assert row["hold_days"] == 2.0
+
+    def test_stop_hit_labels_zero(self):
+        df = _tb_df([(99, 100, 95, 96), (96, 97, 95, 96)])
+        out = triple_barrier_outcomes(df, max_hold=10)
+        row = out.iloc[self.T]
+        assert row["exit_reason"] == "stop"
+        assert row["label"] == 0.0 and row["net_ret"] < 0
+
+    def test_both_barriers_same_bar_conservative_stop(self):
+        # Aynı barda hem stop hem hedef → muhafazakâr: stop önce (motorla aynı)
+        df = _tb_df([(100, 109, 95, 100), (100, 101, 99, 100)])
+        out = triple_barrier_outcomes(df, max_hold=10)
+        assert out.iloc[self.T]["exit_reason"] == "stop"
+        assert out.iloc[self.T]["label"] == 0.0
+
+    def test_time_barrier_costs_make_flat_lose(self):
+        # Bariyer görülmez → süre çıkışı; düz fiyatta maliyetler etiketi 0 yapar
+        df = _tb_df([(100.0, 101.0, 99.0, 100.0)] * 8)
+        out = triple_barrier_outcomes(df, max_hold=3)
+        row = out.iloc[self.T]
+        assert row["exit_reason"] == "süre"
+        assert row["hold_days"] == 4.0            # 3 gün tut + T+1 açılış satışı
+        assert row["label"] == 0.0 and -0.01 < row["net_ret"] < 0
+
+    def test_no_lookahead_tail_is_nan(self):
+        df = _tb_df([(100.0, 101.0, 99.0, 100.0)] * 20)
+        y = make_labels_triple_barrier(df, max_hold=10)
+        # Süre bariyeri + T+1 satışı için gelecek yok → kuyruk NaN olmalı
+        assert y.iloc[-11:].isna().all()
+        assert set(y.dropna().unique()) <= {0.0, 1.0}
+
+    def test_benchmark_relative_flips_label(self):
+        scenario = [(100, 103, 99.5, 102), (102, 109, 101, 108), (108, 109, 107, 108)]
+        df = _tb_df(scenario)
+        # Endeks, işlem penceresinde hisseden çok daha fazla yükselir (%30)
+        bench = pd.Series(1000.0, index=df.index)
+        bench.iloc[self.T + 1:] = 1300.0
+        y_abs = make_labels_triple_barrier(df, max_hold=10)
+        y_rel = make_labels_triple_barrier(df, max_hold=10, benchmark=bench)
+        assert y_abs.iloc[self.T] == 1.0          # mutlak: hedef vurdu, kazandı
+        assert y_rel.iloc[self.T] == 0.0          # relatif: endeksin altında kaldı
+
+    def test_training_set_triple_barrier_aligned(self):
+        X, y = build_training_set(_learnable_df(n=500), horizon=10)
+        assert len(X) == len(y) and len(X) > 0
+        assert not X.isna().any(axis=None)
+        # Eski sabit-ufuk yolu da hâlâ çalışmalı
+        Xf, yf = build_training_set(_learnable_df(n=500), horizon=10, labeling="fixed")
+        assert len(Xf) == len(yf) and len(Xf) > 0
 
 
 @pytest.mark.unit

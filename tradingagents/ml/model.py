@@ -31,6 +31,7 @@ class SignalModelResult:
     ticker: str
     horizon: int = 10
     threshold: float = 0.0
+    labeling: str = "triple_barrier"  # "triple_barrier" (S1) | "fixed" (eski sabit-ufuk)
     n_samples: int = 0
     accuracy: float = 0.0          # backtest (out-of-sample) doğruluk
     baseline: float = 0.0          # çoğunluk sınıfı doğruluğu (taban)
@@ -67,11 +68,19 @@ def train_signal_model(
     horizon: int = 10,
     threshold: float = 0.0,
     n_splits: int = 4,
+    labeling: str = "triple_barrier",
+    benchmark: pd.Series | None = None,
 ) -> SignalModelResult:
     """Sinyal modelini eğitir, backtest eder ve güncel olasılığı üretir.
 
     ``df`` günlük OHLCV (uzun geçmiş iyidir; <~300 bar reddedilir). scikit-learn
     kuruluysa çalışır; değilse ``ok=False`` ve kurulum notu döner.
+
+    Etiket varsayılanı **üçlü-bariyer** (S1): model "horizon gün sonra yukarı mı?"
+    değil, "bu barda açılan ATR stop/hedefli işlem maliyet-sonrası kazanır mı?"
+    sorusunu öğrenir — motorun gerçek işlem kurallarıyla hizalı. ``horizon`` bu
+    modda süre bariyeridir; ``benchmark`` (XU100 kapanışı) verilirse getiri
+    endekse relatif ölçülür. ``labeling="fixed"`` eski davranışı verir.
     """
     try:
         from sklearn.metrics import accuracy_score, precision_score, roc_auc_score
@@ -84,9 +93,10 @@ def train_signal_model(
         return SignalModelResult(False, ticker, horizon, threshold,
                                  reason="ML için en az ~300 günlük bar gerekli.")
 
-    X, y = build_training_set(df, horizon, threshold)
+    X, y = build_training_set(df, horizon, threshold, labeling, benchmark)
     if len(X) < 150 or y.nunique() < 2:
-        return SignalModelResult(False, ticker, horizon, threshold, n_samples=len(X),
+        return SignalModelResult(False, ticker, horizon, threshold, labeling,
+                                 n_samples=len(X),
                                  reason="Eğitim için yeterli/dengeli örnek yok.")
 
     Xv, yv = X.to_numpy(), y.to_numpy().astype(int)
@@ -134,6 +144,7 @@ def train_signal_model(
 
     return SignalModelResult(
         ok=True, ticker=ticker, horizon=horizon, threshold=threshold,
+        labeling=labeling,
         n_samples=len(X), accuracy=round(acc, 3), baseline=round(baseline, 3),
         skill=round(acc - baseline, 3), precision_up=round(prec, 3),
         roc_auc=round(auc, 3) if auc is not None else None,

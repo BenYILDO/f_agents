@@ -36,8 +36,9 @@ from tradingagents.ml.features import (
 )
 
 # Kalibrasyon/kalite metodolojisinin sürümü — eski snapshot'larla kıyas kesintisini
-# işaretlemek için (F0.2 sigmoid + BSS metodolojisi v1).
-MODEL_VERSION = "calib-v1-sigmoid-bss"
+# işaretlemek için. v2 (S1): etiket sabit-ufuktan üçlü-bariyere geçti (ATR stop/
+# hedef + T+1 fill + maliyet); v1 snapshot'larıyla metrikler kıyaslanamaz.
+MODEL_VERSION = "calib-v2-sigmoid-bss-tb"
 
 # Kalite kapısı eşikleri — ileride config'den okunacak
 _MIN_AUC = 0.52
@@ -124,15 +125,20 @@ def validate_model_evidence(
 
 
 def calibrated_probability(ticker: str, df: pd.DataFrame | None,
-                           horizon: int = 10, threshold: float = 0.0) -> ProbabilityResult:
-    """Kalibre yukarı olasılığı + kalite metrikleri. Asla istisna fırlatmaz."""
+                           horizon: int = 10, threshold: float = 0.0,
+                           benchmark: pd.Series | None = None) -> ProbabilityResult:
+    """Kalibre yukarı olasılığı + kalite metrikleri. Asla istisna fırlatmaz.
+
+    Etiket, S1 gereği üçlü-bariyerdir (işlem-hizalı, maliyet-sonrası); ``benchmark``
+    (XU100 kapanış serisi) verilirse etiket endekse relatif ölçülür.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
     if df is None or len(df) < 320:
         return ProbabilityResult(False, ticker, horizon,
                                  reason="Yeterli geçmiş yok (≥320 bar gerekli).",
                                  rejection_reasons=["yetersiz_veri"],
                                  prediction_asof=now_iso)
-    X, y = build_training_set(df, horizon, threshold)
+    X, y = build_training_set(df, horizon, threshold, benchmark=benchmark)
     if len(X) < 250 or y.nunique() < 2:
         return ProbabilityResult(False, ticker, horizon, n_samples=len(X),
                                  reason="Yetersiz ya da tek-sınıflı veri.",

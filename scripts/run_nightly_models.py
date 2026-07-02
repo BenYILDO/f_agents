@@ -36,11 +36,11 @@ def _universe() -> list[str]:
     return sorted(set(bist) | set(port))
 
 
-def _model_row(ticker: str) -> dict | None:
+def _model_row(ticker: str, benchmark=None) -> dict | None:
     df = _fetch_daily(ticker)
     if df is None or df.empty:
         return None
-    pr = calibrated_probability(ticker, df, horizon=10)
+    pr = calibrated_probability(ticker, df, horizon=10, benchmark=benchmark)
     dsr = None
     try:
         sig = compute_signals(df)
@@ -83,9 +83,15 @@ def main() -> int:
     started = time.time()
     universe = _universe()
     print(f"  {len(universe)} hisse işleniyor…", flush=True)
+    # XU100 bir kez çekilir; S1 üçlü-bariyer etiketi endeks-relatif ölçülür.
+    xu = _fetch_daily("XU100.IS")
+    benchmark = xu["Close"] if xu is not None and not xu.empty else None
+    if benchmark is None:
+        print("  ! XU100 alınamadı — etiketler mutlak getiriyle (relatif değil).",
+              flush=True)
     rows = []
     for i, tk in enumerate(universe, 1):
-        row = _model_row(tk)
+        row = _model_row(tk, benchmark)
         if row:
             rows.append(row)
             print(f"    {tk:<12} p_up={row['p_up']} dsr={row['dsr']} ({i}/{len(universe)})",

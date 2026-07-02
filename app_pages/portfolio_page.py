@@ -373,11 +373,14 @@ def _stats_v3(sel: str, df) -> None:
     if st.button("🧮 Derin istatistik (kalibre olasılık + pozisyon boyutu + PBO)",
                  key=f"v3deep_{sel}", use_container_width=True):
         with st.spinner("Kalibre model + PBO hesaplanıyor (birkaç saniye)…"):
-            pr = calibrated_probability(sel, df)
+            xu = _cached_benchmark()        # S1: etiket XU100-relatif
+            bench = xu["Close"] if xu is not None and not xu.empty else None
+            pr = calibrated_probability(sel, df, benchmark=bench)
             grid = _ma_grid_perf(df)
             pbo = pbo_cscv(grid) if grid is not None else None
         if pr.ok:
-            st.caption(f"🎯 Kalibre yukarı olasılığı (h=10g): **%{pr.p_up*100:.0f}** "
+            st.caption(f"🎯 Kalibre kazanma olasılığı (üçlü-bariyer, XU100-relatif, "
+                       f"maks {pr.horizon}g): **%{pr.p_up*100:.0f}** "
                        f"(Brier {pr.brier}, AUC {pr.auc}, n={pr.n_samples})")
             rp = compute_risk(df)
             rr = rp.rr if rp.ok and rp.rr > 0 else 1.5

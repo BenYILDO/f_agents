@@ -2360,3 +2360,35 @@ Bu tablo sezon başında kilitlenir; %99 hedefi resmen emekliye ayrılır.
 - BIST çalışmaları: makro sürücüler (USDTRY, altın, M2, S&P500, faiz) ve Türkçe
   haber/duyarlılık katkısı — dergipark/Springer/IEEE (BIST100 endeks tahmini,
   KAP + sosyal medya duyarlılığı, olay-volatilite çalışmaları).
+
+---
+
+## Claude — 2026-07-02 · S1 TAMAMLANDI (üçlü-bariyer etiketleme kodlandı)
+
+Kullanıcı onayı ("kodla") ile S1 uygulandı:
+
+- **`ml/features.py`**: `triple_barrier_outcomes` + `make_labels_triple_barrier` —
+  arena motorunun birebir fiziğiyle (T+1 açılış fill + slippage, ATR(14) Wilder
+  stop/hedef `analytics.risk` ile aynı formül, gap kuralı, "aynı barda ikisi de →
+  stop önce", süre bariyeri → ertesi açılış satışı, çift-yön komisyon) her bar için
+  işlem sonucu simüle eder. `benchmark` verilirse getiri XU100-relatif. Fizik
+  sabitleri (`TB_*`) modül başında, motor değerleriyle senkron tutulmalı.
+- **`build_training_set`**: varsayılan etiket `triple_barrier` (eski davranış
+  `labeling="fixed"` ile durur); `horizon` artık süre bariyeri anlamında.
+- **`ml/model.py`**: `train_signal_model(labeling=, benchmark=)`; sonuçta
+  `labeling` alanı. Model artık "N gün sonra yukarı mı?" değil "bu kurulumla
+  açılan işlem maliyet-sonrası kazanır mı?" öğreniyor.
+- **`analytics/probability.py`**: kalibre olasılık üçlü-bariyer etikete geçti;
+  `MODEL_VERSION = "calib-v2-sigmoid-bss-tb"` (v1 snapshot'larıyla kıyas kesintisi
+  işaretli — plan §sinyal sürümlemesi).
+- **Bağlantılar**: gecelik model işi XU100'ü bir kez çekip tüm hisselere
+  `benchmark` geçiyor; portföy "derin istatistik" ve ML sayfası aynı şekilde;
+  UI metinleri "yukarı olasılığı" → "kazanma olasılığı (üçlü-bariyer)" olarak
+  düzeltildi (yanlış beyan olmasın).
+- **Testler**: hedef-vuruş=1, stop=0, aynı-bar muhafazakârlığı, süre çıkışında
+  maliyetin düz seriyi 0 yapması, kuyruk NaN (look-ahead yok), XU100-relatif
+  etiketin mutlak etiketi çevirmesi, eski `fixed` yolunun yaşaması. 13/13 ML
+  testi + BIST katmanı paketi regresyonsuz.
+
+**Sonraki adım (S2):** pooled BIST100 panel modeli + Supabase model deposu
+(gecelik eğitim, gün içi yalnız tahmin). S1 etiketleyicisi S2'nin girdisidir.
