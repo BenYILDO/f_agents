@@ -2208,3 +2208,155 @@ Supabase, UI ve arena, o kapıyı geçmeden yazılmayacak. Planlama burada biter
 - **Fama (1970)** — *Efficient Capital Markets: A Review of Theory and Empirical Work*,
   Journal of Finance 25(2). Zayıf-form etkinlik → geçmiş-fiyat-temelli TA'dan sistematik
   edge beklenmemesi (varsayılan şüpheci öncül).
+
+---
+
+## Claude — 2026-07-02 · Sinyal kalitesi araştırması + revize yol haritası
+
+> **Bağlam:** Kullanıcı geri döndü: "Sayfa sayısı arttı ama hâlâ düzgün sinyal
+> üretemiyor. %99 başarıyla sinyal istiyorum. Akademik makaleler, mum
+> formasyonları, haberler, altın/siyaset gibi BIST'i etkileyen etkenlerle
+> birlikte değerlendirsin. Araştır, plan çıkar — geliştirelim mi, sıfırdan mı?"
+>
+> **Hüküm önden:** Sıfırdan kurmak YOK. Mimari (Faz 0 sözleşmesi, arena,
+> edge-kapısı, kill-criterion) doğru ve yeni yazıldı; sorun mimaride değil,
+> **sinyal beyninin kendisinde.** Bu giriş, beyni güçlendirecek araştırma
+> bulgularını ve S1–S5 sinyal fazlarını tanımlar. Ve en önemlisi: **%99 hedefi
+> fiziksel olarak imkânsızdır; hedef yeniden tanımlanmalıdır.**
+
+### 1) %99 gerçeği — hedefin kendisi hatalı
+
+- Tarihin en başarılı fonu Renaissance Medallion, işlemlerinin yalnızca
+  **~%50.75'inde** haklı çıkarak yılda ~%66 brüt getiri üretti. Kazanan, isabet
+  oranı değil; küçük bir edge'in **çok sayıda işleme, sıkı risk kontrolüyle**
+  uygulanmasıdır.
+- Akademik literatürde günlük yön tahmini için gerçekçi out-of-sample doğruluk
+  tavanı **%52–60** bandıdır (lojistik regresyon ~%55, RF ~%57–63 doğrulama;
+  canlıda daha düşük). %60 üstü iddialar neredeyse her zaman look-ahead,
+  survivorship veya test-seti sızıntısıdır.
+- **Yeni hedef tanımı:** doğruluk değil, *maliyet-sonrası beklenen değer*:
+  `E = isabet × ort.kazanç − (1−isabet) × ort.kayıp − maliyet > 0`
+  %55 isabet + 1.5 payoff oranı, "%99 doğruluk" arayışından daha zengin eder.
+  Arena'nın edge-kapısı zaten tam bunu ölçüyor — o disiplin korunur.
+
+### 2) Teşhis — sinyaller neden "düzgün" değil (kod incelemesi)
+
+1. **Per-ticker model veri açlığı içinde.** `ml/model.py` her hisseyi kendi
+   ~2.500 barıyla eğitiyor; 16 özellik + GBDT bu örneklemde taban çizgisini
+   geçemez (skill ≈ 0 gözlemi bununla tutarlı). Planın Faz 3'ünde zaten yazılı
+   olan **pooled panel model** artık ertelenemez; sinyal kalitesinin ana kaldıracı bu.
+2. **Etiket, işlemle hizasız.** `make_labels` 10 gün sonrası basit yukarı/aşağı
+   soruyor; motor ise ATR stop/hedef ile işlem yapıyor. Model başka bir soruya
+   cevap veriyor, kasadan başka bir soru soruluyor. (Codex F0.7 tespitiyle aynı;
+   çözüm §4/S1.)
+3. **BIST'in ana sürücüleri modelde yok.** Literatür BIST100 için USDTRY, altın,
+   CDS/risk primi, faiz, M2, S&P500'ü ana açıklayıcılar olarak gösteriyor; bizim
+   özellik setimiz tamamen hisse-içi teknik. Rejim HMM ve macro_shock var ama
+   *kapı* olarak kullanılıyor, *özellik* olarak modele girmiyor.
+4. **Teknik analiz tek başına edge kaynağı değil.** Kanıt dengesi: geçmiş-fiyat
+   göstergeleri maliyet sonrası tek başına sistematik edge üretmez (Fama 1970;
+   Marshall ve ark. 2006). Teknik katman **aday üretici + zamanlama filtresi**
+   olarak doğru; "sinyalin kendisi" olarak yanlış konumlanmış beklenti.
+
+### 3) Araştırma bulguları (kullanıcının sorduğu dört başlık)
+
+**a) Mum formasyonları ("mum biyografisi"):** Kanıt karışık ve zayıf.
+Marshall-Young-Rose (2006) Dow 30'da 28 yaygın formasyonda edge bulamadı;
+Tharavanij ve ark. (2017, Tayland) anlamlı ortalama getirisi olan formasyonların
+bile yön tahmininde güvenilmez olduğunu gösterdi. Buna karşın Caginalp & Laurent
+(1998) bazı **3-günlük** formasyonlarda kısa vadeli sinyal, Lu & Shiu (2012,
+Tayvan) 4 formasyonda maliyet-sonrası kâr buldu. **Sonuç:** mum formasyonu tek
+başına AL/SAT üretmemeli; mevcut `candlesticks.py` çıktısı pooled modele
+*ikili özellik* olarak girmeli ve ağırlığını veri belirlemeli.
+
+**b) Haber/duyarlılık:** Türkçe çalışmalar KAP duyuruları + sosyal medya
+duyarlılığının (Word2Vec/FastText + LSTM vb.) BIST tahminine katkı verdiğini
+raporluyor; ayrıca TCMB faiz kararları, siyasi şoklar (Gezi, 2016 darbe
+girişimi, seçimler) volatilite rejimini belirgin değiştiriyor. **Sonuç:** haber
+katmanı alfa kaynağı değil **risk filtresi** olarak eklenmeli (bkz. S5) —
+"kötü haber gününde pozisyon azalt" işlevi, "haberden yön tahmin et"
+işlevinden çok daha sağlam.
+
+**c) Altın/siyaset/makro:** BIST endeks çalışmalarında USDTRY, dolar endeksi,
+altın, M2, S&P500, tahvil faizi tekrar tekrar ana değişkenler. Bunlar zaten
+`gold_fx_page` ve `macro_shock` olarak projede var — eksik olan modele
+**özellik** olarak bağlanmaları (S3).
+
+**d) Yöntem literatürü:** López de Prado'nun **triple-barrier etiketleme +
+meta-labeling** çerçevesi (Advances in Financial ML, 2018; Singh & Joubert
+2022) bizim mimariye birebir oturuyor: birincil sinyal (deterministik motor,
+recall'u yüksek) + ikincil ML filtresi (precision'ı yükseltir, pozisyon boyutu
+verir). Yayınlanmış deneylerde precision'ı belirgin artırdığı gösterildi.
+Mevcut "güven skoru + ML olasılığı ortalaması" yerine bu **kademeli** yapı
+hedeflenmeli.
+
+### 4) Revize sinyal fazları (S-serisi; arena fazlarına paralel, onları değiştirmez)
+
+**S1 — Etiketleme düzeltmesi (en yüksek getiri/emek oranı).**
+Triple-barrier etiket: üst bariyer = ATR hedef, alt = ATR stop, dikey = maks
+tutma süresi — motorun *gerçek* işlem kurallarıyla aynı. Hedef değişken
+XU100-relatif ve maliyet-sonrası. `ml/features.py`'a `make_labels_triple_barrier`.
+
+**S2 — Pooled panel model + Supabase model deposu.**
+BIST100 tüm hisseler tek modelde (~75K örnek); kesitsel özellikler (sektör- ve
+XU100-relatif momentum/vol, `cross_section.py` z-skorları) eklenir. Purged
+walk-forward CV + Platt kalibrasyon (Faz 0 kararı korunur). **Eğitim gecelik/
+haftalık bir kez**; gün içinde yalnız tahmin — model artefaktı (pickle +
+`model_version` + metrik karnesi) Supabase'e yazılır, cron başında indirilir.
+Bu, "her gün geçmiş veriyle baştan eğitmesin" talebinin doğrudan karşılığıdır
+ve mevcut `model_cache` deseninin genellemesidir.
+
+**S3 — Makro/rejim özellikleri.**
+USDTRY (seviye momentum + gerçekleşen vol + şok bayrağı), gram altın/XAUUSD,
+XU100 rejim HMM durumu, (bulunabilirse) 5Y CDS veya vekili (eurobond spread /
+USDTRY vol), TCMB faiz patikası → pooled modele özellik. Mum formasyonu
+bitleri (`candlesticks.py`) ve sezonsallık aynı şekilde özellik olarak girer.
+
+**S4 — Meta-labeling mimarisi.**
+Birincil: mevcut deterministik gated sinyal (aday üretir). İkincil: S2 modeli
+"bu adaya gir/girme" olasılığı verir; kalibre olasılık ¼-Kelly boyutlandırmayı
+besler. ML artık kural motorunun *rakibi* değil *filtresi* — arena'daki
+"ML-öncelikli hesap" bu mimariyle yeniden tanımlanır (ablation korunur).
+
+**S5 — Haber/olay katmanı (en son, yalnız filtre).**
+KAP duyuru başlıkları (WAF nedeniyle graceful-degrade), seçim/faiz-kararı
+takvimi, USDTRY şok bayrağı → "olay günü" bayrağı: yeni giriş yok / pozisyon
+yarıya. Türkçe duyarlılık modeli (FinBERT-TR vb.) ancak S1–S4 edge kanıtlarsa
+denenir; alfa değil fren.
+
+**Değişmeyenler:** Edge-kapısı (replay'de XU100'ü maliyet-sonrası geçemeyen
+canlıya çıkmaz), kill-criterion, look-ahead'siz T+1 fill, kapatılamaz emniyet
+kapıları, "başarı = kanıtlı EVET/HAYIR" hükmü. Her S fazı sonunda aynı replay
+koşulur; metrik iyileşmiyorsa faz geri alınır (champion/challenger).
+
+### 5) Başarı metriği sözleşmesi (ön-kayıt, %99'un yerine)
+
+| Metrik | Eşik (öneri) |
+|--------|--------------|
+| İsabet (hit rate) | ≥ %53 (OOS, maliyet-sonrası) |
+| Payoff (ort. kazanç/kayıp) | ≥ 1.3 |
+| Maliyet-sonrası alpha vs XU100 | > 0 (replay + canlı pencere) |
+| Kalibrasyon (Brier vs taban) | tabandan iyi |
+| PBO | < 0.5 (arenanın kendi serisinde) |
+
+Bu tablo sezon başında kilitlenir; %99 hedefi resmen emekliye ayrılır.
+
+### Kaynakça (bu girişin ekledikleri)
+
+- Singh & Joubert (2022) — *Does Meta-Labeling Add to Signal Efficacy?* (Hudson
+  & Thames) — meta-labeling'in precision katkısının deneysel kanıtı.
+- López de Prado (2018) — *Advances in Financial Machine Learning* — triple-barrier
+  etiketleme + meta-labeling çerçevesi.
+- Marshall, Young & Rose (2006) — *Candlestick technical trading strategies: Can
+  they create value for investors?* J. Banking & Finance — Dow 30'da mum
+  formasyonlarında edge yok.
+- Lu & Shiu (2012) — *Profitable candlestick trading strategies — evidence from
+  a new perspective* (Rev. Financial Economics) — Tayvan'da 4 formasyon maliyet
+  sonrası kârlı; formasyonların özellik olarak değeri olabilir.
+- Tharavanij, Siraprapasiri & Rajchamaha (2017) — *Profitability of Candlestick
+  Charting Patterns in the Stock Exchange of Thailand* (SAGE Open).
+- Caginalp & Laurent (1998) — *The predictive power of price patterns* (Applied
+  Mathematical Finance) — 3-günlük formasyonlarda kısa vadeli sinyal.
+- BIST çalışmaları: makro sürücüler (USDTRY, altın, M2, S&P500, faiz) ve Türkçe
+  haber/duyarlılık katkısı — dergipark/Springer/IEEE (BIST100 endeks tahmini,
+  KAP + sosyal medya duyarlılığı, olay-volatilite çalışmaları).
