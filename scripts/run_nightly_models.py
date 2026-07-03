@@ -73,9 +73,35 @@ def _model_row(ticker: str, benchmark=None) -> tuple[dict | None, object]:
     }, df
 
 
+def _macro_frame(benchmark):
+    """S3: USDTRY + altın çekip makro özellik çerçevesini kurar (hata → None)."""
+    if benchmark is None:
+        return None
+    try:
+        from tradingagents.ml.macro import build_macro_frame
+
+        fx = _fetch_daily("TRY=X")       # USDTRY
+        gold = _fetch_daily("GC=F")      # altın (USD, vadeli)
+        frame = build_macro_frame(
+            benchmark,
+            fx["Close"] if fx is not None and not fx.empty else None,
+            gold["Close"] if gold is not None and not gold.empty else None,
+        )
+        got = [s for s, d in (("USDTRY", fx), ("altın", gold))
+               if d is not None and not d.empty]
+        print(f"  Makro çerçeve hazır (XU100 + {', '.join(got) or 'yalnız endeks'}).",
+              flush=True)
+        return frame
+    except Exception as exc:  # noqa: BLE001 — makro yoksa panel nötr kolonla kurulur
+        print(f"  ! Makro çerçeve kurulamadı ({exc}) — nötr kolonlarla devam.",
+              flush=True)
+        return None
+
+
 def _pooled_step(frames: dict, benchmark) -> None:
-    """S2: havuz modelini eğit, artefaktı Supabase'e yaz, challenger tahminlerini
-    model_cache'in pooled kolonlarına koy. Başarısızlık gecelik işi KIRMAZ."""
+    """S2/S3: havuz modelini eğit (makro özellikli), artefaktı Supabase'e yaz,
+    challenger tahminlerini model_cache'in pooled kolonlarına koy.
+    Başarısızlık gecelik işi KIRMAZ."""
     try:
         from tradingagents.ml.pooled import (
             predict_pooled,
@@ -84,9 +110,10 @@ def _pooled_step(frames: dict, benchmark) -> None:
         )
         from tradingagents.storage import pooled_models
 
+        macro = _macro_frame(benchmark)
         print(f"  Havuz modeli eğitiliyor ({len(frames)} hisse, tek panel)…",
               flush=True)
-        res = train_pooled_model(frames, benchmark)
+        res = train_pooled_model(frames, benchmark, macro=macro)
         if not res.ok:
             print(f"  ! Havuz modeli eğitilemedi: {res.reason}", flush=True)
             return
@@ -110,7 +137,7 @@ def _pooled_step(frames: dict, benchmark) -> None:
         })
         preds = predict_pooled(
             {"model": res.model, "calibrator": res.calibrator,
-             "medians": res.medians}, frames, benchmark)
+             "medians": res.medians}, frames, benchmark, macro)
         if preds:
             model_cache.upsert_models([
                 {"ticker": tk, "p_up_pooled": p,

@@ -37,17 +37,21 @@ import numpy as np
 import pandas as pd
 
 from tradingagents.ml.features import (
+    CANDLE_COLUMNS,
     FEATURE_COLUMNS,
     build_feature_frame,
+    candle_feature_frame,
     make_labels_triple_barrier,
 )
+from tradingagents.ml.macro import MACRO_COLUMNS
 
 # Metodoloji sürümü — etiket/özellik/CV disiplini değişince artırılır (kıyas kesintisi).
-POOLED_MODEL_VERSION = "pooled-v1-tb-purged"
+# v2 (S3): mum formasyonu bitleri + makro kolonlar (USDTRY/altın/XU100 rejim vekili).
+POOLED_MODEL_VERSION = "pooled-v2-tb-macro"
 
 # Kesitsel (aynı-gün, evren-içi) ek kolonlar — panel kurulurken hesaplanır.
 CS_COLUMNS = ["cs_ret20_z", "cs_vol_z", "cs_rsi_z", "cs_dist_high_z", "rel_ret_20"]
-PANEL_FEATURES = FEATURE_COLUMNS + CS_COLUMNS
+PANEL_FEATURES = FEATURE_COLUMNS + CS_COLUMNS + CANDLE_COLUMNS + MACRO_COLUMNS
 
 _CAL_FRAC = 0.70          # OOS'un erken %70'i kalibrasyon, geç %30'u test
 _MIN_PANEL_ROWS = 2_000   # havuz bundan küçükse pooled modelin anlamı yok
@@ -105,24 +109,46 @@ def _add_cross_sectional(panel: pd.DataFrame,
     return panel
 
 
+def _join_macro(panel: pd.DataFrame, macro: pd.DataFrame | None) -> pd.DataFrame:
+    """Makro çerçeveyi tarih üzerinden panele yapıştırır (aynı gün = aynı satır).
+
+    Panelin takviminde olup makroda olmayan gün, son bilinen makro değerle
+    doldurulur (ffill — nedensel). ``macro=None`` ise kolonlar nötr 0.0 olur ki
+    makro verisiz ortamda panel yine kurulabilsin (graceful-degrade).
+    """
+    if macro is None or len(macro) == 0:
+        for col in MACRO_COLUMNS:
+            panel[col] = 0.0
+        return panel
+    dates = panel.index.get_level_values("date")
+    m = macro.sort_index()
+    m = m[~m.index.duplicated(keep="last")].reindex(dates, method="ffill")
+    for col in MACRO_COLUMNS:
+        panel[col] = m[col].to_numpy() if col in m.columns else 0.0
+    return panel
+
+
 def build_panel(
     data: dict[str, pd.DataFrame],
     benchmark: pd.Series | None = None,
     horizon: int = 10,
     threshold: float = 0.0,
+    macro: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Ticker→OHLCV sözlüğünü tek eğitim paneline döker.
 
     Döner: ``X`` (MultiIndex [date, ticker], kolonlar ``PANEL_FEATURES``) ve
     hizalı ``y`` (üçlü-bariyer etiketi). NaN özellik/etiket satırları düşülmüş,
-    tarih sırasına göre sıralı (walk-forward bölme buna güvenir).
+    tarih sırasına göre sıralı (walk-forward bölme buna güvenir). ``macro``
+    (``ml.macro.build_macro_frame`` çıktısı) verilirse USDTRY/altın/rejim
+    kolonları tarih üzerinden eklenir; verilmezse nötr 0.0.
     """
     frames: list[pd.DataFrame] = []
     for tk, df in data.items():
         if df is None or len(df) < 260:
             continue
         try:
-            X = build_feature_frame(df)
+            X = build_feature_frame(df).join(candle_feature_frame(df))
             y = make_labels_triple_barrier(df, horizon, threshold, benchmark)
         except Exception:  # noqa: BLE001 — tek hisse paneli kırmasın
             continue
@@ -138,6 +164,7 @@ def build_panel(
     panel = pd.concat(frames, ignore_index=True)
     panel = panel.set_index(["date", "ticker"]).sort_index()
     panel = _add_cross_sectional(panel, benchmark)
+    panel = _join_macro(panel, macro)
     panel = panel.replace([np.inf, -np.inf], np.nan).dropna()
     return panel[PANEL_FEATURES], panel["_label"]
 
@@ -175,6 +202,7 @@ def train_pooled_model(
     horizon: int = 10,
     threshold: float = 0.0,
     n_splits: int = 5,
+    macro: pd.DataFrame | None = None,
 ) -> PooledModelResult:
     """Havuz modelini eğitir, purged walk-forward ile ölçer, kalibre eder.
 
@@ -196,7 +224,7 @@ def train_pooled_model(
     )
     from tradingagents.ml.model import _new_classifier
 
-    X, y = build_panel(data, benchmark, horizon, threshold)
+    X, y = build_panel(data, benchmark, horizon, threshold, macro)
     universe = sorted({tk for _, tk in X.index}) if len(X) else []
     if len(X) < _MIN_PANEL_ROWS or y.nunique() < 2:
         return PooledModelResult(False, horizon=horizon, threshold=threshold,
@@ -293,13 +321,15 @@ def predict_pooled(
     bundle: dict,
     data: dict[str, pd.DataFrame],
     benchmark: pd.Series | None = None,
+    macro: pd.DataFrame | None = None,
 ) -> dict[str, float]:
     """Kayıtlı havuz modeliyle her hissenin güncel kazanma olasılığı.
 
     ``bundle``: :func:`deserialize_bundle` çıktısı (ya da eğitim sonucunun
     ``model/calibrator/medians`` alanları). Kesitsel z-skorlar, verilen evrenin
     SON barları üzerinden hesaplanır — tahmin de eğitimle aynı bilgiyi görür.
-    Hata durumunda o hisse atlanır; asla istisna fırlatmaz.
+    ``macro`` verilirse son satırı kullanılır (eğitimdeki tarih-join'inin canlı
+    karşılığı). Hata durumunda o hisse atlanır; asla istisna fırlatmaz.
     """
     model = bundle.get("model")
     calibrator = bundle.get("calibrator")
@@ -313,13 +343,14 @@ def predict_pooled(
             continue
         try:
             last = build_feature_frame(df).iloc[-1]
+            last = pd.concat([last, candle_feature_frame(df).iloc[-1]])
         except Exception:  # noqa: BLE001
             continue
         rows[tk] = last
     if not rows:
         return {}
 
-    F = pd.DataFrame(rows).T          # index=ticker, kolonlar=FEATURE_COLUMNS
+    F = pd.DataFrame(rows).T          # index=ticker, kolonlar=özellikler
     # Kesitsel z — son barlar arasında (eğitimdeki aynı-gün z'nin canlı karşılığı)
     F["cs_ret20_z"] = _zscore_row(F["ret_20"])
     F["cs_vol_z"] = _zscore_row(F["atr_pct"])
@@ -330,7 +361,18 @@ def predict_pooled(
         b20 = float(benchmark.iloc[-1] / benchmark.iloc[-21] - 1.0)
     F["rel_ret_20"] = F["ret_20"] - b20 if b20 is not None else F["ret_20"]
 
-    F = (F[PANEL_FEATURES].replace([np.inf, -np.inf], np.nan)
+    # Makro: son bilinen satır tüm hisselere aynı düşer (eğitimle aynı sözleşme)
+    last_macro = None
+    if macro is not None and len(macro) > 0:
+        last_macro = macro.sort_index().ffill().iloc[-1]
+    for col in MACRO_COLUMNS:
+        v = last_macro.get(col) if last_macro is not None else None
+        F[col] = float(v) if v is not None and np.isfinite(v) else 0.0
+
+    # Eski (v1) artefaktla uyum: bundle kendi kolon listesini taşır
+    cols = bundle.get("feature_columns") or PANEL_FEATURES
+    cols = [c for c in cols if c in F.columns]
+    F = (F[cols].replace([np.inf, -np.inf], np.nan)
          .fillna(medians).fillna(0.0))
     try:
         p_raw = model.predict_proba(F.to_numpy(float))[:, 1]

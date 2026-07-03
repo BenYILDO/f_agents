@@ -2426,3 +2426,33 @@ Kullanıcı onayı ("kodla") ile S1 uygulandı:
 
 **Sonraki adım (S3):** USDTRY/altın/rejim-HMM/mum-formasyon bitlerinin panele
 özellik olarak eklenmesi; ardından S4 meta-labeling.
+
+---
+
+## Claude — 2026-07-02 · S3 TAMAMLANDI (makro + mum özellikleri panele girdi)
+
+- **`ml/macro.py`**: tarih-indeksli makro çerçeve — XU100 20g momentum,
+  MA200-üstü rejim vekili (HMM tam-örneklem parametresi bilerek KULLANILMADI:
+  parametre sızıntısı olur; nedensel vekil replay'in rejim proxy'siyle tutarlı),
+  XU100 gerçekleşen vol, USDTRY 20g ivme + vol (TL stresi), altın (GC=F) 20g
+  momentum. Kaynak seri yoksa kolon nötr 0.0 (graceful-degrade).
+- **`ml/features.py`**: `candle_feature_frame` — 15 formasyonun yön×güç yükü
+  bar başına [-1,+1] `candle_net` + 3-bar penceresi `candle_net_3`. Literatür
+  kararı (plan §3a) uygulandı: mum tek başına sinyal değil, **özellik biti**;
+  ağırlığını model belirler. Per-ticker şampiyonun özellik seti DEĞİŞMEDİ.
+- **`ml/pooled.py`**: `PANEL_FEATURES` = 16 taban + 5 kesitsel + 2 mum + 6 makro
+  (29 kolon). Makro, tarih üzerinden join'lenir (aynı gün → tüm hisselere aynı
+  satır; eksik gün ffill — nedensel). `predict_pooled` aynı sözleşmeyle son
+  makro satırını kullanır; eski (v1) artefakt kendi `feature_columns` listesiyle
+  uyumlu kalır. Sürüm: **pooled-v2-tb-macro** (kıyas kesintisi).
+- **Gecelik iş**: `_macro_frame` USDTRY (`TRY=X`) + altın (`GC=F`) çeker;
+  çekilemezse nötr kolonlarla eğitim sürer, iş kırılmaz.
+- **Testler** (+6): makro çerçevenin kaynaksız nötrlüğü + MA200 ısınması,
+  kaynaklıyken sıfırdan farklılığı, panelde aynı-gün-aynı-değer değişmezi,
+  makro'suz panelin yaşaması, makrolu uçtan uca eğitim+tahmin, boğa-yutan
+  formasyonun pozitif yükü + NaN üretmeme. 27/27 ML+pooled; tam pakette
+  regresyon yok. Kuru koşu: v2 artefakt ~67KB; sentetikte kesitsel kolon
+  (cs_dist_high_z) önem sırasına şimdiden girdi.
+
+**Sonraki adım (S4):** meta-labeling — deterministik gated sinyal birincil,
+havuz modeli ikincil filtre; arena "ML-öncelikli" hesabının yeniden tanımı.

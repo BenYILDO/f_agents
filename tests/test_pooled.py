@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tradingagents.ml.macro import MACRO_COLUMNS, build_macro_frame
 from tradingagents.ml.pooled import (
     PANEL_FEATURES,
     build_panel,
@@ -75,6 +76,56 @@ class TestPanel:
         means = by_date.mean()[full_days]
         assert len(means) > 100
         assert np.allclose(means, 0.0, atol=1e-9)
+
+
+@pytest.mark.unit
+class TestMacroFeatures:
+    """S3: USDTRY/altın/rejim vekili panele tarih üzerinden girer."""
+
+    def test_macro_frame_neutral_without_sources(self):
+        data = _universe(n_tickers=2)
+        xu = _benchmark(data)
+        m = build_macro_frame(xu)
+        assert list(m.columns) == MACRO_COLUMNS
+        assert (m["usdtry_ret_20"] == 0.0).all()     # kaynak yok → nötr
+        assert (m["gold_ret_20"] == 0.0).all()
+        assert m["xu_above_ma200"].iloc[:150].isna().all()   # MA200 ısınması
+        assert set(m["xu_above_ma200"].dropna().unique()) <= {0.0, 1.0}
+
+    def test_macro_frame_with_sources(self):
+        data = _universe(n_tickers=2)
+        xu = _benchmark(data)
+        rng = np.random.default_rng(3)
+        fx = pd.Series(30 * np.cumprod(1 + rng.normal(0.001, 0.01, len(xu))),
+                       index=xu.index)
+        m = build_macro_frame(xu, usdtry_close=fx, gold_close=fx * 80)
+        assert m["usdtry_ret_20"].abs().max() > 0
+        assert m["gold_ret_20"].abs().max() > 0
+
+    def test_panel_joins_macro_same_value_per_date(self):
+        data = _universe()
+        xu = _benchmark(data)
+        X, _ = build_panel(data, xu, macro=build_macro_frame(xu))
+        assert all(c in X.columns for c in MACRO_COLUMNS)
+        # Aynı gün tüm hisselere aynı makro satır düşmeli
+        per_date_nunique = X.groupby(level="date")["xu_ret_20"].nunique()
+        assert (per_date_nunique <= 1).all()
+        # Makro'suz panel nötr kolonlarla yine kurulmalı (graceful-degrade)
+        X0, _ = build_panel(data, xu, macro=None)
+        assert (X0["usdtry_ret_20"] == 0.0).all()
+        assert len(X0) > 2000
+
+    def test_train_and_predict_with_macro(self):
+        data = _universe()
+        xu = _benchmark(data)
+        macro = build_macro_frame(xu)
+        res = train_pooled_model(data, xu, macro=macro)
+        assert res.ok
+        assert set(res.feature_importance) == set(PANEL_FEATURES)
+        preds = predict_pooled({"model": res.model, "calibrator": res.calibrator,
+                                "medians": res.medians}, data, xu, macro)
+        assert set(preds) == set(data)
+        assert all(0.0 <= p <= 1.0 for p in preds.values())
 
 
 @pytest.mark.unit

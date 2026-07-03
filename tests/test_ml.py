@@ -12,9 +12,11 @@ import pandas as pd
 import pytest
 
 from tradingagents.ml.features import (
+    CANDLE_COLUMNS,
     FEATURE_COLUMNS,
     build_feature_frame,
     build_training_set,
+    candle_feature_frame,
     make_labels,
     make_labels_triple_barrier,
     triple_barrier_outcomes,
@@ -142,6 +144,33 @@ class TestTripleBarrier:
         # Eski sabit-ufuk yolu da hâlâ çalışmalı
         Xf, yf = build_training_set(_learnable_df(n=500), horizon=10, labeling="fixed")
         assert len(Xf) == len(yf) and len(Xf) > 0
+
+
+@pytest.mark.unit
+class TestCandleFeatures:
+    """S3: mum formasyonları özellik bitine çevrilir (tek başına sinyal değil)."""
+
+    def test_bullish_engulfing_positive_net(self):
+        # 18 küçük gövdeli bar + ayı barı + onu yutan büyük boğa barı
+        rows = []
+        for i in range(18):
+            up = i % 2 == 0
+            o, c = (100.0, 100.5) if up else (100.5, 100.0)
+            rows.append((o, max(o, c) + 0.3, min(o, c) - 0.3, c))
+        rows.append((100.5, 100.8, 98.8, 99.0))    # ayı
+        rows.append((98.8, 101.8, 98.6, 101.5))    # boğa yutan
+        idx = pd.bdate_range("2023-01-02", periods=len(rows))
+        o, h, l, c = zip(*rows)
+        df = pd.DataFrame({"Open": o, "High": h, "Low": l, "Close": c,
+                           "Volume": 1e6}, index=idx)
+        f = candle_feature_frame(df)
+        assert list(f.columns) == CANDLE_COLUMNS
+        assert f["candle_net"].iloc[-1] > 0          # yutan boğa pozitif yük
+        assert f["candle_net"].between(-1, 1).all()
+
+    def test_no_pattern_is_neutral_zero(self):
+        f = candle_feature_frame(_learnable_df(n=100))
+        assert f.notna().all(axis=None)              # NaN üretmez (panel düşürmesin)
 
 
 @pytest.mark.unit

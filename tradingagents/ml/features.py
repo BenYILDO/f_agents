@@ -80,6 +80,36 @@ def build_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
 
 
+CANDLE_COLUMNS = ["candle_net", "candle_net_3"]
+
+# Formasyon yönü/gücü ağırlıkları — analytics.candlesticks.PATTERN_META ile uyumlu
+_CANDLE_SIGN = {"boğa": 1.0, "ayı": -1.0, "nötr": 0.0}
+
+
+def candle_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Mum formasyonu özellikleri (S3): bar başına net boğa/ayı yükü.
+
+    Literatür mum formasyonlarının tek başına AL/SAT üretmesini desteklemez ama
+    bazı formasyonlarda kısa vadeli sinyal bulur (plan §3a) — bu yüzden formasyon
+    burada **özellik bitine** çevrilir; ağırlığını veri (model) belirler.
+
+    - ``candle_net``: o barın formasyon yükü, [-1, +1] (güç 1-3 / 3, yön işaretli;
+      birden çok formasyon toplanıp kırpılır).
+    - ``candle_net_3``: son 3 barın toplam yükü / 3 (kısa pencere teyidi).
+    """
+    from tradingagents.analytics.candlesticks import PATTERN_META, detect_candlesticks
+
+    flags = detect_candlesticks(df)
+    net = pd.Series(0.0, index=df.index)
+    for code, (_, direction, strength) in PATTERN_META.items():
+        if code in flags.columns:
+            net = net + flags[code].astype(float) * _CANDLE_SIGN[direction] * (strength / 3.0)
+    out = pd.DataFrame(index=df.index)
+    out["candle_net"] = net.clip(-1.0, 1.0)
+    out["candle_net_3"] = (net.rolling(3, min_periods=1).sum() / 3.0).clip(-1.0, 1.0)
+    return out
+
+
 def make_labels(df: pd.DataFrame, horizon: int = 10, threshold: float = 0.0) -> pd.Series:
     """İleriye dönük ikili etiket: ``horizon`` gün sonraki getiri > eşik → 1.
 
