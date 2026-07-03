@@ -2456,3 +2456,43 @@ Kullanıcı onayı ("kodla") ile S1 uygulandı:
 
 **Sonraki adım (S4):** meta-labeling — deterministik gated sinyal birincil,
 havuz modeli ikincil filtre; arena "ML-öncelikli" hesabının yeniden tanımı.
+
+---
+
+## Claude — 2026-07-03 · S4 TAMAMLANDI (meta-labeling altyapısı — kanıt-kapılı)
+
+Kullanıcı kararı: altyapı şimdi kurulur, filtrenin canlı etkisi **karne kanıtına
+şartlanır**. Uygulanan mimari (López de Prado meta-labeling, plan §3d):
+
+- **`analysis/meta.py`** — saf `meta_gate`: birincil sinyal (deterministik gated
+  karar) adayları üretir; ikincil model yalnız **veto** (p_win < 0.45) ya da
+  **boyut kısma** (0.45→0.60 arası lineer, taban ×0.5) yapabilir. Filtre boyutu
+  ASLA büyütmez, kendi başına işlem AÇAMAZ. Model seçimi: kaliteli pooled >
+  kaliteli per-ticker > **pasif** (allow=True, ×1.0). Kalite kapısını geçmiş
+  model yokken kapı kendiliğinden pasiftir → bugünkü canlı davranış birebir
+  sürer; etki, gecelik karneler kalite kapısını geçen bir model üretince başlar.
+- **İzlenebilirlik**: kapı kararı her analizde `signals["ml_gate"]` olarak
+  snapshot'a yazılır ("neden girildi/girilmedi/kısıldı" izi); kısılan emirlerin
+  gerekçesine `· ML ×0.xx` eklenir; observer karnesine `meta_p_win/meta_source/
+  meta_allow` alanları girer — "hangi model filtre olmalı?" bu kanıtla seçilecek.
+- **Ablation korunur**: filtre yalnız `use_ml_meta_filter=True` profilde etkir —
+  o da yeniden tanımlanan **ML-meta** hesabı (eski "ML-öncelikli"; hâlâ OBSERVER,
+  para harcamaz). Diğer 4 para hesabı kontrol kolu olarak filtresiz.
+- **Canlı boşluk kapatıldı**: `build_session_inputs` artık gecelik model
+  önbelleğini okuyup `analyze_universe`'e geçiriyor — p_up/pooled alanları canlı
+  arenaya hiç akmıyordu (sessiz boşluk); Supabase yoksa {} ile pasif sürer.
+- **Testler** (`tests/test_meta.py`, 11): kalitesiz modelin pasifliği, pooled >
+  per-ticker önceliği, veto eşiği, çarpanın monotonluğu ve [0.5, 1.0] sınırı,
+  geçersiz girdinin pasifliğe düşmesi; motor entegrasyonunda veto'nun yalnız
+  meta profilde işlemesi (kontrol profil etkilenmez), kısmi çarpanın adet
+  küçültmesi + gerekçe izi, pasif kapının davranışı değiştirmemesi, profil
+  bayraklarının doğruluğu. Tam pakette regresyon yok.
+
+**Aktivasyon kriteri (ön-kayıt):** ML-meta hesabına para verilmesi (OBSERVER→
+ACTIVE) ancak (a) pooled/champion karnesi kalite kapısını art arda geçer ve
+(b) observer karnesindeki meta kararları birincil-sinyal-yalın sonuçlardan
+maliyet-sonrası iyiyse, YENİ sezonla yapılır. Kod değişikliği: tek satır
+(status) + yeni sezon — geriye dönük hiçbir sonuç değişmez.
+
+**Sonraki adım (S5):** olay/haber takvim filtresi (KAP/seçim/faiz günü riski) —
+yalnız fren olarak; S1–S4 edge kanıtlamadan duyarlılık modeli denenmez.

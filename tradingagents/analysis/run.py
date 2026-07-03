@@ -22,6 +22,7 @@ import pandas as pd
 
 from tradingagents.analysis import trust
 from tradingagents.analysis.confidence import unified_confidence
+from tradingagents.analysis.meta import meta_gate
 from tradingagents.analytics.backtest import daily_strategy_returns
 from tradingagents.analytics.combined import combined_signal
 from tradingagents.analytics.composite import _fetch_daily
@@ -224,6 +225,18 @@ def analyze_ticker(
         "p_up": p_up,
     }
 
+    # S4 — meta-labeling kapısı: ML'in bu adaya filtre kararı (kalitesiz → pasif).
+    # Snapshot'a yazılır ki "neden girildi/girilmedi/kısıldı" izi kaybolmasın.
+    mm = model_meta or {}
+    signals["ml_gate"] = meta_gate(
+        p_up=p_up,
+        quality_passed=mm.get("quality_passed"),
+        model_version=mm.get("model_version") or "",
+        p_up_pooled=mm.get("p_up_pooled"),
+        pooled_quality=mm.get("pooled_quality"),
+        pooled_version=mm.get("pooled_version") or "",
+    ).to_dict()
+
     return AnalysisOutcome(
         ticker=ticker,
         ok=True,
@@ -353,4 +366,8 @@ def _model_meta_from_row(row: dict) -> dict:
         "model_version": row.get("model_version"),
         "quality_passed": row.get("quality_passed"),
         "rejection_reasons": row.get("rejection_reasons"),
+        # S4 — pooled challenger alanları (meta-labeling kapısının girdileri)
+        "p_up_pooled": row.get("p_up_pooled"),
+        "pooled_quality": row.get("pooled_quality"),
+        "pooled_version": row.get("pooled_version"),
     }

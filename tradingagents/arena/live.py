@@ -60,6 +60,7 @@ def _signal_fields(outcome) -> dict:
         "p_up": conf.get("p_up"),
         "regime": outcome.regime_trend or "",
         "behavior": outcome.behavior or "",
+        "ml_gate": sig.get("ml_gate") or {},   # S4 meta-labeling kapısı
     }
 
 
@@ -148,16 +149,27 @@ def decide_orders(profile: Profile, account: AccountState, outcomes: list,
         cands.sort(reverse=True, key=lambda x: x[0])
 
         for _c, tk, f in cands[:slots]:
+            # S4 — meta-labeling: yalnız use_ml_meta_filter profillerinde (ablation);
+            # kaliteli model yoksa kapı pasiftir (allow=True, mult=1.0).
+            gate = f.get("ml_gate") or {}
+            gate_on = profile.use_ml_meta_filter and gate.get("active")
+            if gate_on and not gate.get("allow", True):
+                continue                      # ML veto — aday atlanır (iz snapshot'ta)
             qty = _size_quantity(profile, f, equity, investable)
+            if gate_on:
+                qty = int(qty * float(gate.get("size_mult", 1.0)))
             if qty <= 0:
                 continue
             est_cost = D(f["close"]) * qty * (D(1) + _bps(cfg.slippage_bps) + _bps(cfg.commission_bps))
             if est_cost > investable:
                 continue
             investable -= est_cost
+            reason = f"AL güven {f['confidence']:.0f}"
+            if gate_on and float(gate.get("size_mult", 1.0)) < 1.0:
+                reason += f" · ML ×{float(gate['size_mult']):.2f}"
             orders.append(PendingOrder(
                 ticker=tk, side="BUY", quantity=qty, signal_session=session,
-                reason=f"AL güven {f['confidence']:.0f}",
+                reason=reason,
                 stop=D(f["stop"]), target=D(f.get("target") or f["close"]),
             ))
     return orders
@@ -269,16 +281,21 @@ def record_predictions(state: ArenaState, outcomes: list, session: str) -> int:
     """Observer karne sözleşmesi (plan F0.6): kaliteli p_up tahminlerini biriktirir.
 
     Para P&L'i değildir; horizon dolunca gerçekleşen fiyatla değerlendirilir (ileride).
+    S4: pooled challenger'ın tahmini + meta-kapı kararı da karneye girer —
+    "hangi model filtre olmalı?" sorusu bu kanıtla cevaplanacak.
     """
     n = 0
     for o in outcomes:
         f = _signal_fields(o)
-        if f["p_up"] is None:
+        gate = f.get("ml_gate") or {}
+        if f["p_up"] is None and gate.get("p_win") is None:
             continue
         state.predictions.append({
             "session": session, "ticker": o.ticker, "p_up": f["p_up"],
             "close_at_signal": f["close"], "decision": f["decision"],
             "horizon_days": 10, "realized_price": None, "realized_up": None,
+            "meta_p_win": gate.get("p_win"), "meta_source": gate.get("source"),
+            "meta_allow": gate.get("allow"), "meta_active": gate.get("active"),
         })
         n += 1
     return n
@@ -333,7 +350,14 @@ def build_session_inputs(tickers: list[str] | None = None):
     from tradingagents.strategy.dip_signal import BIST30
 
     universe = tickers or list(BIST30)
-    outcomes = analyze_universe(universe)
+    # Gecelik model önbelleği (p_up + pooled challenger) canlı karara da aksın —
+    # yoksa {}: analiz p_up'sız, meta-kapı pasif çalışır (graceful-degrade).
+    try:
+        from tradingagents.storage import model_cache as _mc
+        models = _mc.read_models()
+    except Exception:  # noqa: BLE001
+        models = {}
+    outcomes = analyze_universe(universe, model_cache=models)
 
     prices: dict[str, dict] = {}
     session = ""

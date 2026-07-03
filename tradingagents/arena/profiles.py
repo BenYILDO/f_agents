@@ -45,6 +45,12 @@ class Profile:
     use_target: bool = True         # R/R hedefi görülünce çık
     max_hold_days: int = 60         # maksimum tutma süresi (rejim/sinyal kaymasına karşı)
 
+    # ── S4: meta-labeling filtresi (ablation korunur — yalnız ML hesabında) ──
+    # True ise kaliteli ML modeli girişleri veto edebilir / boyut kısabilir
+    # (analysis.meta.meta_gate). Kaliteli model yokken kapı pasiftir; diğer
+    # hesaplar kontrol kolu olarak filtresiz kalır.
+    use_ml_meta_filter: bool = False
+
     def is_observer(self) -> bool:
         return self.status == "OBSERVER"
 
@@ -85,12 +91,15 @@ PROFILES: dict[str, Profile] = {
         max_position_weight=0.20, min_cash_reserve=0.05, max_hold_days=90,
     ),
     "ml_observer": Profile(
-        code="ml_observer", name="ML-öncelikli", emoji="🤖",
+        code="ml_observer", name="ML-meta", emoji="🤖",
         status="OBSERVER",
-        blurb="V1'de OBSERVER: para harcamaz, kalibre p_up tahminlerini + karne "
-              "biriktirir. Kalite + hedef-uyumu kanıtlanınca sonraki sezon parayla girer.",
+        blurb="S4 mimarisi: deterministik motor aday üretir, kaliteli ML modeli "
+              "meta-filtre olarak veto/boyut kısar (kural motorunun rakibi değil "
+              "filtresi). V1'de OBSERVER: para harcamaz, karne biriktirir; kalite "
+              "kanıtlanınca sonraki sezon parayla aktive edilir.",
         min_confidence=50.0, use_regime_filter=True, max_positions=8,
         risk_per_trade=0.01, max_position_weight=0.20, kelly_fraction=0.25,
+        use_ml_meta_filter=True,
     ),
 }
 
