@@ -20,6 +20,67 @@ from tradingagents.arena.profiles import PROFILES
 from tradingagents.arena.replay import run_arena_replay
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _last_close(ticker: str) -> float | None:
+    """Pozisyonların güncel K/Z'si için son kapanış (10 dk önbellekli)."""
+    from tradingagents.analytics.composite import _fetch_daily
+    try:
+        df = _fetch_daily(ticker, period="1mo")
+        return float(df["Close"].iloc[-1]) if df is not None and len(df) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _render_model_maintenance():
+    """Gecelik model işinin UI'dan koşumu — GitHub Actions kullanılamıyorsa.
+
+    Aynı kod yolu (scripts.run_nightly_models.run_nightly): per-ticker kalibre
+    olasılık + havuz modeli + Supabase yazımı. Ağır iştir (birkaç dakika).
+    """
+    with st.expander("🧠 Model bakımı — gecelik işi şimdi çalıştır (Actions'sız)"):
+        st.caption("GitHub Actions kapalıysa (özel repo dakika/ödeme sınırı) aynı "
+                   "iş buradan koşar: her hisse için kalibre kazanma olasılığı + "
+                   "havuz (pooled) modeli eğitilir, Supabase'e yazılır. "
+                   "**Birkaç dakika sürer**; günde bir kez yeterli.")
+        if st.button("🧠 Modelleri şimdi eğit", use_container_width=True,
+                     key="train_models_now"):
+            prog = st.progress(0.0, text="Başlıyor…")
+            try:
+                from scripts.run_nightly_models import run_nightly
+                summary = run_nightly(progress=lambda f, t: prog.progress(f, text=t))
+            except Exception as e:  # noqa: BLE001
+                prog.empty()
+                st.error(f"Eğitim koşamadı: {type(e).__name__}: {e}")
+                return
+            prog.empty()
+            if summary.get("ok"):
+                st.success(f"{summary['n_models']}/{summary['n_universe']} hisse modeli "
+                           f"yazıldı · {summary['elapsed_s']}s. Havuz karnesi aşağıda.")
+            else:
+                st.error(summary.get("error") or "Eğitim başarısız.")
+
+        # Son havuz karneleri (varsa) — modelin zamanla iyileşme izi
+        try:
+            from tradingagents.storage import pooled_models
+            cards = pooled_models.list_report_cards(limit=5)
+        except Exception:  # noqa: BLE001
+            cards = []
+        if cards:
+            st.markdown("**Son havuz (pooled) model karneleri**")
+            st.dataframe(pd.DataFrame([{
+                "Eğitim": (c.get("trained_at") or "")[:16].replace("T", " "),
+                "Sürüm": c.get("model_version"),
+                "AUC": c.get("auc"), "BSS": c.get("brier_skill_score"),
+                "Örnek": c.get("n_samples"),
+                "Kalite": "✅ GEÇTİ" if c.get("quality_passed") else "❌ geçemedi",
+                "Neden": ", ".join(c.get("rejection_reasons") or []) or "—",
+            } for c in cards]), use_container_width=True, hide_index=True)
+            st.caption("Kalite kapısını geçen model çıkana dek ML meta-filtresi "
+                       "pasiftir (bu bir hata değil, emniyettir). AUC ≥ 0.52 ve "
+                       "BSS > 0 istikrarlı gelmeye başlarsa filtre kendiliğinden "
+                       "devreye girer.")
+
+
 def _equity_chart(result):
     """Tüm profillerin + XU100'ün equity eğrilerini tek grafikte toplar."""
     frames = []
@@ -224,6 +285,8 @@ def _render_live():
             ok, msg = supabase_diagnose()
             (st.success if ok else st.error)(msg)
 
+    _render_model_maintenance()
+
     state = load_state() or new_state()
 
     c1, c2, c3 = st.columns([1.4, 1, 1])
@@ -267,20 +330,26 @@ def _render_live():
         prof = PROFILES.get(code)
         last_eq = D(acc.equity_history[-1]["equity"]) if acc.equity_history else acc.cash
         ret = (last_eq / init_cap - 1) * 100 if init_cap else D(0)
+        n_fills = sum(1 for e in acc.ledger
+                      if e.get("event_type") in ("BUY", "SELL"))
         rows.append({
             "": prof.emoji if prof else "",
             "Hesap": prof.name if prof else code,
             "Tür": "OBSERVER" if acc.status == "OBSERVER" else "PARA",
             "Kasa+Pozisyon (TL)": f"{float(last_eq):,.0f}",
             "Getiri": f"%{float(ret):+.1f}",
+            "Gerçekleşen K/Z (TL)": f"{float(acc.realized_pnl):+,.0f}",
             "Nakit (TL)": f"{float(acc.cash):,.0f}",
             "Pozisyon": str(len(acc.positions)),
             "Bekleyen emir": str(len(acc.pending_orders)),
+            "İşlem": str(n_fills),
         })
     st.markdown("##### 🏆 Canlı lig")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.caption("⏳ İlk seansta hesaplar emir kuyruğa alır (T+1) — pozisyonlar ertesi "
-               "seans açılışında oluşur. Her gün bir kez çalıştır (ya da cron).")
+               "seans açılışında oluşur. Her gün bir kez çalıştır (ya da cron). "
+               "Getiri = kasa+pozisyonun 100k'ya göre değişimi; Gerçekleşen K/Z "
+               "yalnız kapanan işlemlerin toplamıdır.")
 
     # ── Hesap detayları ────────────────────────────────────────────────────
     for code, acc in state.accounts.items():
@@ -292,29 +361,58 @@ def _render_live():
                          f"{len(acc.pending_orders)} bekleyen"):
             if acc.positions:
                 st.markdown("**Açık pozisyonlar**")
-                st.dataframe(pd.DataFrame([{
-                    "Hisse": p.ticker.replace(".IS", ""), "Adet": p.quantity,
-                    "Maliyet": f"{float(p.avg_cost):.2f}", "Stop": f"{float(p.stop):.2f}",
-                    "Hedef": f"{float(p.target):.2f}", "Giriş seansı": p.opened_session,
-                } for p in acc.positions.values()]), use_container_width=True, hide_index=True)
+                pos_rows = []
+                for p in acc.positions.values():
+                    last = _last_close(p.ticker)
+                    cost = float(p.avg_cost)
+                    pnl_pct = (last / cost - 1) * 100 if last and cost else None
+                    pnl_tl = (last - cost) * p.quantity if last else None
+                    pos_rows.append({
+                        "Hisse": p.ticker.replace(".IS", ""), "Adet": p.quantity,
+                        "Maliyet": f"{cost:.2f}",
+                        "Güncel": f"{last:.2f}" if last else "—",
+                        "K/Z %": f"%{pnl_pct:+.1f}" if pnl_pct is not None else "—",
+                        "K/Z TL": f"{pnl_tl:+,.0f}" if pnl_tl is not None else "—",
+                        "Stop": f"{float(p.stop):.2f}", "Hedef": f"{float(p.target):.2f}",
+                        "Giriş seansı": p.opened_session,
+                    })
+                st.dataframe(pd.DataFrame(pos_rows), use_container_width=True,
+                             hide_index=True)
             if acc.pending_orders:
-                st.markdown("**Bekleyen emirler (ertesi açılışta dolacak)**")
+                st.markdown("**Bugünün kararları — bekleyen emirler (ertesi açılışta dolar)**")
                 st.dataframe(pd.DataFrame([{
                     "Hisse": o.ticker.replace(".IS", ""), "Yön": o.side,
                     "Adet": o.quantity, "Sebep": o.reason,
                 } for o in acc.pending_orders]), use_container_width=True, hide_index=True)
-            if not acc.positions and not acc.pending_orders:
-                st.caption("Henüz pozisyon/emir yok.")
+            fills = [e for e in acc.ledger if e.get("event_type") in ("BUY", "SELL")]
+            if fills:
+                st.markdown("**Son hareketler (dolan emirler)**")
+                st.dataframe(pd.DataFrame([{
+                    "Seans": e.get("session", ""), "Yön": e.get("event_type"),
+                    "Hisse": (e.get("ticker") or "").replace(".IS", ""),
+                    "Fiyat": (e.get("metadata") or {}).get("fill_price", "—"),
+                    "Tutar (TL)": f"{float(e.get('amount', 0)):+,.0f}",
+                } for e in fills[-10:][::-1]]), use_container_width=True, hide_index=True)
+            if not acc.positions and not acc.pending_orders and not fills:
+                st.caption("Henüz pozisyon/emir yok — ilk seansı çalıştır.")
 
     # ── Observer karne ─────────────────────────────────────────────────────
     if state.predictions:
         with st.expander(f"🤖 ML Observer karnesi — {len(state.predictions)} tahmin"):
-            st.caption("Para harcamaz; kalibre p_up tahminleri biriktirir. Horizon "
-                       "(10g) dolunca gerçekleşen fiyatla değerlendirilir (karne).")
+            st.caption("Para harcamaz; kalibre tahminleri biriktirir. Horizon (10g) "
+                       "dolunca gerçekleşen fiyatla değerlendirilir. S4: meta-kapı "
+                       "kararı (kaynak model + izin) da karneye girer.")
             recent = state.predictions[-15:]
+
+            def _pct(v):
+                return f"%{v*100:.0f}" if v is not None else "—"
+
             st.dataframe(pd.DataFrame([{
                 "Seans": p["session"], "Hisse": p["ticker"].replace(".IS", ""),
-                "p_up": f"%{p['p_up']*100:.0f}", "Karar": p["decision"],
+                "p_up": _pct(p.get("p_up")), "Karar": p["decision"],
+                "Meta p_win": _pct(p.get("meta_p_win")),
+                "Meta": (p.get("meta_source") or "—") +
+                        ("" if p.get("meta_allow", True) else " · VETO"),
             } for p in recent]), use_container_width=True, hide_index=True)
 
 

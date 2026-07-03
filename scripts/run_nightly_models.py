@@ -162,15 +162,29 @@ def _legacy_row(row: dict) -> dict:
     return {k: v for k, v in row.items() if k in _LEGACY_COLS}
 
 
-def main() -> int:
+def run_nightly(universe: list[str] | None = None, progress=None) -> dict:
+    """Gecelik model işinin çekirdeği — hem CLI (cron) hem Streamlit butonu çağırır.
+
+    GitHub Actions kullanılamıyorsa (özel repo dakika/ödeme sınırı) aynı iş
+    arayüzdeki "Modelleri şimdi eğit" butonuyla koşturulur. ``progress(frac, text)``
+    UI ilerleme çubuğu içindir. Özet dict döndürür.
+    """
+    def _tick(frac, text):
+        if progress is not None:
+            try:
+                progress(min(max(frac, 0.0), 1.0), text)
+            except Exception:  # noqa: BLE001
+                pass
+
     print("== Gecelik model işi ==", flush=True)
     if not is_configured():
         print("  Supabase yapılandırılmamış — atlanıyor.", flush=True)
-        return 0
+        return {"ok": False, "error": "Supabase yapılandırılmamış."}
     started = time.time()
-    universe = _universe()
+    universe = universe or _universe()
     print(f"  {len(universe)} hisse işleniyor…", flush=True)
     # XU100 bir kez çekilir; S1 üçlü-bariyer etiketi endeks-relatif ölçülür.
+    _tick(0.02, "XU100 çekiliyor…")
     xu = _fetch_daily("XU100.IS")
     benchmark = xu["Close"] if xu is not None and not xu.empty else None
     if benchmark is None:
@@ -179,6 +193,8 @@ def main() -> int:
     rows = []
     frames: dict = {}
     for i, tk in enumerate(universe, 1):
+        _tick(0.03 + 0.72 * i / len(universe),
+              f"{tk} modeli eğitiliyor ({i}/{len(universe)})…")
         row, df = _model_row(tk, benchmark)
         if df is not None:
             frames[tk] = df
@@ -188,6 +204,7 @@ def main() -> int:
                   flush=True)
         else:
             print(f"    {tk:<12} atlandı ({i}/{len(universe)})", flush=True)
+    _tick(0.78, "Model önbelleği Supabase'e yazılıyor…")
     try:
         model_cache.upsert_models(rows)
     except SupabaseError as exc:
@@ -199,11 +216,24 @@ def main() -> int:
             model_cache.upsert_models([_legacy_row(r) for r in rows])
         except SupabaseError as exc2:
             print(f"  ! Yazılamadı: {exc2}", flush=True)
-            return 1
+            return {"ok": False, "error": f"model_cache yazılamadı: {exc2}"}
     # S2 — havuz (pooled) challenger: per-ticker şampiyon yazıldıktan sonra
+    _tick(0.82, "Havuz (pooled) modeli eğitiliyor — büyük panel, birkaç dakika…")
     _pooled_step(frames, benchmark)
-    print(f"== Bitti · {len(rows)} model yazıldı · {time.time()-started:.0f}s ==", flush=True)
-    return 0 if rows else 1
+    elapsed = time.time() - started
+    _tick(1.0, "Bitti.")
+    print(f"== Bitti · {len(rows)} model yazıldı · {elapsed:.0f}s ==", flush=True)
+    return {"ok": bool(rows), "n_models": len(rows), "n_universe": len(universe),
+            "elapsed_s": round(elapsed), "benchmark": benchmark is not None}
+
+
+def main() -> int:
+    summary = run_nightly()
+    if not summary.get("ok"):
+        # Supabase yapılandırılmamışsa nazikçe 0 (cron'u kırmayalım), yazma
+        # hatasında 1 (Actions kırmızı görsün).
+        return 0 if "yapılandırılmamış" in (summary.get("error") or "") else 1
+    return 0
 
 
 if __name__ == "__main__":

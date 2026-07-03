@@ -378,7 +378,7 @@ def _stats_v3(sel: str, df) -> None:
             pr = calibrated_probability(sel, df, benchmark=bench)
             grid = _ma_grid_perf(df)
             pbo = pbo_cscv(grid) if grid is not None else None
-        if pr.ok:
+        if pr.ok and pr.p_up is not None:
             st.caption(f"🎯 Kalibre kazanma olasılığı (üçlü-bariyer, XU100-relatif, "
                        f"maks {pr.horizon}g): **%{pr.p_up*100:.0f}** "
                        f"(Brier {pr.brier}, AUC {pr.auc}, n={pr.n_samples})")
@@ -386,6 +386,14 @@ def _stats_v3(sel: str, df) -> None:
             rr = rp.rr if rp.ok and rp.rr > 0 else 1.5
             sizing = position_size(pr.p_up, rr, ewma_vol(ret))
             st.caption(f"📏 Önerilen pozisyon: {sizing.note}")
+        elif pr.ok:
+            # Kalite kapısını geçemedi → p_up bilerek None (kalitesiz model karar
+            # etkileyemez). Ham metrikleri + red nedenlerini dürüstçe göster.
+            reasons = ", ".join(pr.rejection_reasons) or pr.reason
+            st.caption(f"🎯 Model kalite kapısını geçemedi → olasılık kullanılmıyor "
+                       f"(neden: {reasons}). Ham: AUC {pr.auc}, BSS "
+                       f"{pr.brier_skill_score}, n={pr.n_samples}. Bu bir hata değil; "
+                       f"kalitesiz modelin dürüstçe reddedilmesidir.")
         else:
             st.caption(f"Kalibre olasılık yok: {pr.reason}")
         if pbo and pbo.get("ok"):
