@@ -1,0 +1,36 @@
+name: Arena edge kapısı (replay)
+
+# Elle tetiklenir (workflow_dispatch): plan §🚦 EDGE KAPISI koşusu.
+# Sonuç çıktısı artifact olarak yüklenir; karar docs/EDGE_GATE_DECISION.md'ye
+# elle işlenir (ön-kayıt disiplini — eşikler koşudan ÖNCE kilitli olmalı).
+
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: "Tarihsel pencere"
+        type: choice
+        options: [3y, 5y, 10y]
+        default: 5y
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements-hourly.txt
+      - run: pip install -r scripts/requirements-hourly.txt
+      - name: Replay koş
+        run: |
+          python scripts/run_arena_replay.py --period "${{ inputs.period }}" \
+            | tee arena_replay_result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arena-replay-${{ inputs.period }}-${{ github.run_id }}
+          path: arena_replay_result.txt

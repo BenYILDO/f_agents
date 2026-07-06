@@ -1,0 +1,29 @@
+name: Testler (çekirdek)
+
+# Para-yolu çekirdek testleri (arena, faz0, analitik, ML, storage) her push/PR'da.
+# LLM bağımlılığı gerektiren testler kapsam dışı — minimal kurulumla yeşil kalan
+# beyaz-liste koşulur.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements-hourly.txt
+      - run: pip install -r scripts/requirements-hourly.txt scikit-learn stockstats pytest
+      - run: >
+          python -m pytest -q
+          tests/test_arena.py tests/test_phase0.py tests/test_analytics.py
+          tests/test_dip_signal.py tests/test_composite_guards.py
+          tests/test_ratio_score.py tests/test_ml.py tests/test_model_validation.py
+          tests/test_storage_client.py tests/test_portfolio_positions.py
+          tests/test_data_health.py tests/test_safe_ticker_component.py
