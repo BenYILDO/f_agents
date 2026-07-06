@@ -2208,3 +2208,102 @@ Supabase, UI ve arena, o kapıyı geçmeden yazılmayacak. Planlama burada biter
 - **Fama (1970)** — *Efficient Capital Markets: A Review of Theory and Empirical Work*,
   Journal of Finance 25(2). Zayıf-form etkinlik → geçmiş-fiyat-temelli TA'dan sistematik
   edge beklenmemesi (varsayılan şüpheci öncül).
+
+---
+
+## Claude — 2026-07-06 · Depo incelemesi + "nihai hâl ve destekli alım-satım" yol haritası
+
+> **Bağlam:** Kullanıcı talebi — "projeyi nihai hâline erdirmek ve destekli alım
+> satım yapmak istiyorum; geliştirme öner." Bu bölüm, 2026-06-29 nihai kararından
+> sonraki kodun (Faz 0 + Faz 1A commit'leri) denetimi ve kalan yolun somut sırasıdır.
+> Nihai kararı DEĞİŞTİRMEZ; onun neresinde olduğumuzu ve sıradaki adımları netler.
+
+### Mevcut durum denetimi (kanıtlı)
+
+| Plan adımı | Durum | Kanıt |
+|---|---|---|
+| Faz 0 (p_up yönü, ModelEvidence, macro_shock, kalibrasyon) | ✅ tamam | `dd76898`, `1e2806e`; `tests/test_phase0.py` geçiyor |
+| Faz 1A — saf execution çekirdeği + replay + lig UI | ✅ tamam | `5ff7775`; `arena/engine.py` (T+1 açılış fill, gap→açılıştan çıkış, aynı-bar stop-önce, bps komisyon+yönlü slippage), `arena/replay.py`, `app_pages/arena_page.py`; `test_arena.py` dahil **52/52 test geçiyor** |
+| Arena SQL şeması | ✍️ yazıldı, **bilinçli olarak bağlı değil** | `storage/schema_arena.sql` — plan gereği edge kapısından önce bağlanmayacak |
+| 🚦 **EDGE KAPISI (GO/NO-GO)** | ❌ **HENÜZ KOŞULMADI / SONUÇ KAYITLI DEĞİL** | Depoda hiçbir replay sonucu, karar kaydı veya eşik kilidi yok |
+| Faz 1B+ (Supabase ledger, shadow, canlı) | ⏸ doğru şekilde bekliyor | — |
+
+**Yani proje tam kapının önünde duruyor.** Sıradaki iş kod yazmak değil,
+**kapıyı çalıştırıp kararı kaydetmek.**
+
+### Tespit 1 — Edge kapısı koşulmalı ve sonucu depoya kilitlenmelidir
+
+- Bu oturumda `scripts/run_arena_replay.py` denendi; sandbox proxy'si Yahoo
+  Finance'i 403 ile kesiyor. **GitHub Actions runner'ında yfinance zaten çalışıyor**
+  (saatlik cron bunun kanıtı) → önerilen: `workflow_dispatch` tetiklemeli bir
+  `arena-replay.yml` workflow'u; replay'i koşar, lig tablosu + edge özeti JSON/MD
+  artifact olarak yüklenir. Böylece kapı kararı tek tıkla, her yerden alınabilir.
+- **Ön-kayıt disiplini (plan §5 kill criterion):** replay'e bakmadan ÖNCE
+  `docs/EDGE_GATE_DECISION.md` açılıp eşikler kilitlenmelidir (hangi pencere,
+  hangi metrik, kaç işlem, "geçti" tanımı). Sonuca bakıp eşik seçmek, DSR'nin
+  uyardığı selection bias'ın ta kendisidir.
+- **Pencere önerisi:** tek 5y koşusu yerine ayrık doğrulama — örn. parametre/sanity
+  için 2019–2023, karar için dokunulmamış 2024→bugün. Tek pencere + tek bakış da
+  kabul edilebilir; ama iki kez bakılacaksa ayrım şart.
+
+### Tespit 2 — Replay ile canlı motorun ölçtüğü şey aynı değil (bilinçli ama karar için kritik)
+
+`replay.py` caveat'larında dürüstçe yazıyor: tarihsel koşu **dip-sinyali + ATR +
+200GHO rejim proxy'si** kullanır; `min_confidence`, Kelly, p_up, likidite filtresi
+uygulanmaz. Sonuç: kapı aslında **"dip stratejisinin maliyet-sonrası edge'i var mı"**
+sorusunu ölçer, "arena profillerinin edge'i"ni değil. Bu V1 için kabul edilebilir —
+ama karar kaydına bu sınırlama açıkça yazılmalı; kapı geçilirse bile canlı paper
+penceresi (shadow + kill criterion) asıl hakem olmaya devam eder. İstenirse ileride
+nedensel bir güven-proxy'si (o güne kadarki veriyle hesaplanan) replay'e eklenebilir;
+V1 kapısını bunun için bekletmek gerekmez.
+
+### Tespit 3 — Güvenlik NO-GO hâlâ açık
+
+`streamlit_app.py`'de kimlik doğrulama yok (tek `password` alanı OpenAI anahtarı
+girişi). Uygulama Supabase'e service-role ile yazıyor; public deploy edilirse
+**kimlik doğrulamasız mutasyon** (2026-06-29 §6 NO-GO'su) aynen geçerli. Canlı
+arena UI'dan önce asgari: `st.secrets` tabanlı uygulama parolası kapısı; tercihen
+Supabase Auth + gerçek RLS. Bu, deploy platformu tartışmasından önce gelir.
+
+### Tespit 4 — Depo hijyeni (küçük ama görünür)
+
+1. **`README.md` → `readmeee.md`** (`752a0cd`): GitHub artık depo ana sayfasında
+   README göstermiyor. Kasıtlı değilse geri adlandırılmalı.
+2. **Test CI yok:** workflows yalnız iki cron. 52 hızlı test var ama push/PR'da
+   koşulmuyor → basit bir `tests.yml` (pytest, push+PR) regresyonu bedavaya yakalar.
+3. `requirements.txt` içeriği `"."` — çalışıyor (paketi kurar) ama bilerek böyle
+   olduğu bir yorum satırıyla belirtilmeli; yoksa ileride "boş dosya" sanılıp bozulur.
+
+### "Destekli alım-satım" — gerçekçi tanım ve sıra
+
+Kullanıcının hedefi tam otomatik gerçek para değil, **destekli** alım-satım. Bu,
+plandaki fazlarla birebir örtüşen bir "insan-onaylı" katmandır ve **broker API'siz**
+kurulabilir:
+
+1. **Sinyal → Telegram önerisi (öner-onayla):** günlük EOD koşusu "GARAN AL,
+   güven 72, stop 41.2, hedef 46.8, önerilen adet 120 (kasa %8)" kartı atar;
+   kullanıcı beğenirse **kendi aracı kurumunda elle** emri girer. Bot yalnız
+   önerir, kayıt tutar ve gerçekleşeni (elle işaretlenen fill'i) karneye yazar.
+   Bu, "takip edemiyorum" kök derdini de çözer; paper arena canlıya çıktığında
+   aynı mesaj altyapısını paylaşır.
+2. **Paper arena = önerinin karnesi:** canlı paper hesap(lar) aynı sinyallerle
+   otomatik koşar → kullanıcının onayladığı işlemlerle botun kendi başına
+   yaptıkları yan yana kıyaslanır ("ben mi daha iyi filtreliyorum, bot mu?").
+3. **Gerçek-para otomasyonu (çok sonra, sadece kill-criterion EVET derse):**
+   Türkiye'de bireysel erişilebilir emir API'si pratikte sınırlı — bilinen yol
+   Deniz Yatırım **AlgoLab API'si** (BIST hisse, REST/WS); Matriks/entegratör
+   çözümleri kurumsal ağırlıklı. Bu adım ayrı bir güvenlik/uyum planı ister
+   (emir limitleri, günlük zarar kesici, manuel kill switch) ve **yasal olarak
+   yalnız kendi hesabında**, yatırım tavsiyesi niteliği taşımadan kalmalıdır.
+
+### Önerilen sıra (özet, mevcut nihai karara sadık)
+
+1. `EDGE_GATE_DECISION.md` ile eşikleri kilitle → `arena-replay.yml` workflow'u →
+   **kapıyı koş, sonucu depoya yaz.** (kod: ~yarım gün)
+2. Hijyen paketi: README geri adlandır + `tests.yml` CI. (~1 saat)
+3. Kapı GEÇERSE: Faz 1B — arena SQL onayı + atomik fill RPC + **tek hesapla**
+   shadow → canlı paper. Kapı GEÇMEZSE: arena altyapısı yazılmaz; sinyal katmanına
+   dönülür (plan gereği).
+4. Telegram özet + öner-onayla "destekli mod" (paper canlıyla aynı anda).
+5. Public deploy'dan önce auth (NO-GO şartı).
+6. Ön-kayıtlı pencere → kill criterion → ancak EVET ise fon/ML aktivasyonu/gerçek para.
