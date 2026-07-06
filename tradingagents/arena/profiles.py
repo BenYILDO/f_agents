@@ -45,6 +45,11 @@ class Profile:
     use_target: bool = True         # R/R hedefi görülünce çık
     max_hold_days: int = 60         # maksimum tutma süresi (rejim/sinyal kaymasına karşı)
 
+    # ── Overlay (maruziyet) modu — edge kapısı deneme #2 ─────────────────
+    exposure_mode: bool = False     # True: sinyal-giriş yerine "hep yatırımda kal"
+    bear_position_frac: float = 0.4 # ayı rejimde hedef pozisyon sayısı oranı
+    rebalance_every: int = 21       # rotasyon kontrol periyodu (bar ≈ 1 ay)
+
     def is_observer(self) -> bool:
         return self.status == "OBSERVER"
 
@@ -83,6 +88,15 @@ PROFILES: dict[str, Profile] = {
         min_confidence=50.0, require_regime_bull=True, require_trend_behavior=True,
         use_regime_filter=True, max_positions=8, risk_per_trade=0.012,
         max_position_weight=0.20, min_cash_reserve=0.05, max_hold_days=90,
+    ),
+    "overlay": Profile(
+        code="overlay", name="Overlay", emoji="🧭",
+        blurb="Deneme #2: hep yatırımda kal (momentum sepeti, eşit ağırlık); ayı "
+              "rejimde pozisyon sayısını azalt. ATR stop/hedef yok, aylık rotasyon.",
+        exposure_mode=True, use_regime_filter=False, require_regime_bull=False,
+        max_positions=10, max_position_weight=0.12, min_cash_reserve=0.0,
+        use_stop=False, use_target=False, max_hold_days=10_000,
+        bear_position_frac=0.4, rebalance_every=21,
     ),
     "ml_observer": Profile(
         code="ml_observer", name="ML-öncelikli", emoji="🤖",

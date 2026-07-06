@@ -148,17 +148,21 @@ def run_backtest(
             else:
                 rv = regime.loc[d]
                 regime_ok = True if pd.isna(rv) else bool(rv)
-            for tk, bar in aligned.items():
-                held = tk in positions
-                if held:
-                    pos = positions[tk]
-                    sell = bool(bar["sell"].iloc[i]) is True
-                    aged = (i - pos["entry_i"]) >= profile.max_hold_days
-                    if (sell or aged) and tk not in pending_sells:
-                        pending_sells.append(tk)
-                elif bool(bar["buy"].iloc[i]) is True:
-                    if _entry_allowed(tk, bar, i, profile, regime_ok):
-                        pending_buys.append(tk)
+            if profile.exposure_mode:
+                pending_buys, pending_sells = _overlay_orders(
+                    aligned, positions, i, profile, regime_ok)
+            else:
+                for tk, bar in aligned.items():
+                    held = tk in positions
+                    if held:
+                        pos = positions[tk]
+                        sell = bool(bar["sell"].iloc[i]) is True
+                        aged = (i - pos["entry_i"]) >= profile.max_hold_days
+                        if (sell or aged) and tk not in pending_sells:
+                            pending_sells.append(tk)
+                    elif bool(bar["buy"].iloc[i]) is True:
+                        if _entry_allowed(tk, bar, i, profile, regime_ok):
+                            pending_buys.append(tk)
 
     # ── Sezon sonu: açık pozisyonları son kapanıştan kapat ────────────────
     last_i = len(dates) - 1
@@ -194,9 +198,54 @@ def _mark_to_market(cash: float, positions: dict, aligned: dict, i: int) -> floa
     return float(value)
 
 
+def _overlay_orders(aligned: dict, positions: dict, i: int, profile: Profile,
+                    regime_ok: bool) -> tuple[list[str], list[str]]:
+    """Overlay modu (deneme #2): hep yatırımda kal; ayı rejimde küçül.
+
+    - Hedef pozisyon sayısı: boğa = ``max_positions``, ayı =
+      ``round(max_positions * bear_position_frac)`` (en az 1). Nakite tam dönüş yok.
+    - Rejim küçülmesinde en zayıf 20g momentumlular satılır.
+    - Her ``rebalance_every`` barda rotasyon: momentumu ilk ``2×hedef`` dışına
+      düşen tutulan satılır (turnover'ı sınırlı tutan histerezis).
+    - Boş slotlar en yüksek momentumlu adaylarla doldurulur; ATR stop/hedef yok.
+    """
+    target = profile.max_positions if regime_ok else max(
+        1, round(profile.max_positions * profile.bear_position_frac))
+
+    mom: dict[str, float] = {}
+    for tk, bar in aligned.items():
+        if pd.isna(bar["Close"].iloc[i]):
+            continue
+        closes = bar["Close"].iloc[max(0, i - 20):i + 1].dropna()
+        if len(closes) >= 2:
+            mom[tk] = float(closes.iloc[-1] / closes.iloc[0] - 1.0)
+
+    sells: list[str] = []
+    held = [tk for tk in positions if tk in mom]
+    excess = len(positions) - target
+    if excess > 0:
+        sells.extend(sorted(held, key=lambda t: mom[t])[:excess])
+    elif mom and i % profile.rebalance_every == 0:
+        top = set(sorted(mom, key=mom.__getitem__, reverse=True)[:2 * target])
+        sells.extend(tk for tk in held if tk not in top)
+
+    buys: list[str] = []
+    open_slots = target - (len(positions) - len(sells))
+    if open_slots > 0:
+        for tk in sorted(mom, key=mom.__getitem__, reverse=True):
+            if tk in positions or tk in sells:
+                continue
+            buys.append(tk)
+            if len(buys) >= open_slots:
+                break
+    return buys, sells
+
+
 def _entry_allowed(tk: str, bar: pd.DataFrame, i: int, profile: Profile,
                    regime_ok: bool) -> bool:
     """Giriş kapısı: rejim filtresi + trend-takip kendi-MA şartı + geçerli stop."""
+    if profile.exposure_mode:
+        return pd.notna(bar["Close"].iloc[i])
     if profile.use_regime_filter and not regime_ok:
         return False
     if profile.require_trend_behavior and not bool(bar["trend_ok"].iloc[i]):
@@ -238,14 +287,18 @@ def _execute_buys(candidates: list[str], positions: dict, aligned: dict, i: int,
 
     for _mom, tk, op in ranked[:slots]:
         entry = op * (1 + slip)
-        stop = float(aligned[tk]["stop"].iloc[i])
-        target = aligned[tk]["target"].iloc[i]
-        target = float(target) if pd.notna(target) else entry * 1.10
-        stop_dist = entry - stop
-        if stop_dist <= 0:
-            continue
-        risk_budget = profile.risk_per_trade * equity_now
-        qty_risk = risk_budget / stop_dist
+        if profile.exposure_mode:
+            # Overlay: eşit-ağırlık sepet — risk-bazlı boyut ve ATR stop yok.
+            stop, target, qty_risk = 0.0, float("inf"), float("inf")
+        else:
+            stop = float(aligned[tk]["stop"].iloc[i])
+            target = aligned[tk]["target"].iloc[i]
+            target = float(target) if pd.notna(target) else entry * 1.10
+            stop_dist = entry - stop
+            if stop_dist <= 0:
+                continue
+            risk_budget = profile.risk_per_trade * equity_now
+            qty_risk = risk_budget / stop_dist
         qty_weight = (profile.max_position_weight * equity_now) / entry
         qty_cash = investable / (entry * (1 + res_bps))
         qty = int(min(qty_risk, qty_weight, qty_cash))

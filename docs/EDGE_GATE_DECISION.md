@@ -52,3 +52,32 @@ Sharpe'a bakıp kapıyı sonradan "geçti" saymak selection bias olur; sayılmad
 "sürekli-yatırımda kal + rejim kötüyken maruziyeti azalt" ailesi (endeks tabanı +
 sinyal overlay) deneme #2 olarak bu günlüğe önceden yazılıp koşulur. Evren listesi
 düzeltmesi gerekli: KOZAL.IS delist/yeniden adlandırılmış.
+
+---
+
+## Deneme #2 — ÖN-KAYIT (2026-07-06, sonuç görülmeden kilitlendi)
+
+**Hipotez:** Koşu #1'in kaybı nakit sürtünmesinden geldi; "hep yatırımda kal,
+ayı rejimde küçül" profili maliyet sonrası XU100'ü geçebilir.
+
+**Kilitli kurallar (kod: `profiles.py` → `overlay`, `engine.py` → `_overlay_orders`):**
+
+- Evren: BIST30 (KOZAL.IS çıkarıldı — Yahoo'da yok; 29 hisse).
+- Sepet: en yüksek **20 günlük momentum**lu hisseler, **eşit ağırlık**
+  (poz. tavanı %12), hedef **10 pozisyon** (boğa ≈ ~%100 yatırımda).
+- Rejim: XU100 < 200GHO (ayı) → hedef pozisyon sayısı **4** (≈%40-48 maruziyet);
+  küçülürken en zayıf momentumlular satılır. **Nakite tam dönüş yok.**
+- Rotasyon: **21 barda bir**; momentumu ilk 2×hedef sıralamasının dışına düşen
+  tutulan satılır (histerezis — turnover sınırlı).
+- ATR stop/hedef **yok**; max_hold süresi yok; kill-switch (maks hesap DD) açık.
+- Fizik AYNI: 5bps komisyon + 10bps slippage + T+1 açılış fill.
+- **GEÇTİ tanımı değişmedi:** getiri VE Sharpe'ta XU100 al-tut'u geç (5y).
+- Not: koşu #1'deki 4 sinyal profili de aynı koşuda yeniden raporlanır (evren
+  artık 29 hisse olduğu için sayılar hafif oynayabilir; karar overlay üzerinden).
+
+**Koşu komutu:** `python scripts/run_arena_replay.py --period 5y`
+(veya Actions → "Arena edge kapısı (replay)").
+
+| # | Tarih | Pencere | Sonuç | Karar | Not |
+|---|-------|---------|-------|-------|-----|
+| 2 | _(beklemede)_ | 5y | — | — | Overlay ön-kaydı yukarıda |

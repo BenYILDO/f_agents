@@ -221,8 +221,9 @@ class TestMetrikler:
 @pytest.mark.unit
 class TestProfiller:
 
-    def test_dort_aktif_bir_observer(self):
-        assert len(active_profiles()) == 4
+    def test_bes_aktif_bir_observer(self):
+        # 4 sinyal-giriş profili + 1 overlay (deneme #2) aktif; ML observer.
+        assert len(active_profiles()) == 5
         observers = [p for p in PROFILES.values() if p.is_observer()]
         assert len(observers) == 1
         assert observers[0].code == "ml_observer"
@@ -235,6 +236,48 @@ class TestProfiller:
         snap = PROFILES["balanced"].rules_snapshot()
         assert snap["code"] == "balanced"
         assert "risk_per_trade" in snap
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Overlay modu (edge kapısı deneme #2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_OVR = Profile(code="ovr", name="Ovr", emoji="🧭", exposure_mode=True,
+               use_regime_filter=False, max_positions=4, max_position_weight=0.3,
+               min_cash_reserve=0.0, use_stop=False, use_target=False,
+               max_hold_days=10_000, bear_position_frac=0.5, rebalance_every=21)
+
+
+@pytest.mark.unit
+class TestOverlay:
+
+    def test_sinyal_olmadan_yatirimda_kalir(self):
+        """buy=False olsa da overlay sepeti doldurur ve tutar."""
+        dates = _dates(30)
+        data = {f"T{k}.IS": _flat_df(dates, price=100.0 + k) for k in range(6)}
+        res = run_backtest(_OVR, data, dates, _CFG, regime=None)
+        assert res.ok
+        # Tüm çıkışlar sezon-sonu olmalı (stop/hedef/sinyal çıkışı yok)
+        assert res.n_trades == 4
+        assert all(t.exit_reason == "sezon-sonu" for t in res.trades)
+
+    def test_ayi_rejimde_pozisyon_sayisi_azalir(self):
+        """Rejim ayı iken hedef = max_positions * bear_position_frac."""
+        dates = _dates(30)
+        data = {f"T{k}.IS": _flat_df(dates, price=100.0 + k) for k in range(6)}
+        bear = pd.Series(False, index=dates)
+        res = run_backtest(_OVR, data, dates, _CFG, regime=bear)
+        assert res.ok
+        assert res.n_trades == 2  # 4 * 0.5 = 2 pozisyon, sezon-sonu kapanış
+
+    def test_stop_kolonundaki_dusus_overlayde_cikis_tetiklemez(self):
+        """use_stop=False: fiyat 'stop' kolonunun altına inse bile çıkmaz."""
+        dates = _dates(20)
+        df = _flat_df(dates, price=100.0)
+        df.loc[dates[10]:, ["Open", "High", "Low", "Close"]] = 80.0  # stop=90 altı
+        res = run_backtest(_OVR, {"T0.IS": df}, dates, _CFG, regime=None)
+        assert res.ok
+        assert all(t.exit_reason == "sezon-sonu" for t in res.trades)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,8 +317,8 @@ class TestReplayOrkestrasyon:
 
         result = replay_mod.run_arena_replay(period="3y")
         assert result.ok, result.error
-        # 4 aktif profil lig tablosunda
-        assert len(result.leaderboard) == 4
+        # 5 aktif profil (4 sinyal + overlay) lig tablosunda
+        assert len(result.leaderboard) == 5
         # benchmark hesaplandı
         assert len(result.benchmark_equity) > 0
         assert result.benchmark_metrics.n_days > 0
