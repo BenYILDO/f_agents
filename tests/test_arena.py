@@ -221,9 +221,9 @@ class TestMetrikler:
 @pytest.mark.unit
 class TestProfiller:
 
-    def test_bes_aktif_bir_observer(self):
-        # 4 sinyal-giriş profili + 1 overlay (deneme #2) aktif; ML observer.
-        assert len(active_profiles()) == 5
+    def test_alti_aktif_bir_observer(self):
+        # 4 sinyal profili + overlay (#2) + endeks+rejim (#3) aktif; ML observer.
+        assert len(active_profiles()) == 6
         observers = [p for p in PROFILES.values() if p.is_observer()]
         assert len(observers) == 1
         assert observers[0].code == "ml_observer"
@@ -317,8 +317,8 @@ class TestReplayOrkestrasyon:
 
         result = replay_mod.run_arena_replay(period="3y")
         assert result.ok, result.error
-        # 5 aktif profil (4 sinyal + overlay) lig tablosunda
-        assert len(result.leaderboard) == 5
+        # 6 aktif profil lig tablosunda
+        assert len(result.leaderboard) == 6
         # benchmark hesaplandı
         assert len(result.benchmark_equity) > 0
         assert result.benchmark_metrics.n_days > 0

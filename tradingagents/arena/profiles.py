@@ -98,6 +98,15 @@ PROFILES: dict[str, Profile] = {
         use_stop=False, use_target=False, max_hold_days=10_000,
         bear_position_frac=0.4, rebalance_every=21,
     ),
+    "index_regime": Profile(
+        code="index_regime", name="Endeks+Rejim", emoji="⚓",
+        blurb="Deneme #3 (son koşu): TÜM evren eşit ağırlık, rotasyon YOK; tek kural "
+              "ayı rejimde yarıya in, boğada %100'e dön. Saf zamanlama testi.",
+        exposure_mode=True, use_regime_filter=False, require_regime_bull=False,
+        max_positions=29, max_position_weight=0.04, min_cash_reserve=0.0,
+        use_stop=False, use_target=False, max_hold_days=10_000,
+        bear_position_frac=0.5, rebalance_every=10**9,
+    ),
     "ml_observer": Profile(
         code="ml_observer", name="ML-öncelikli", emoji="🤖",
         status="OBSERVER",

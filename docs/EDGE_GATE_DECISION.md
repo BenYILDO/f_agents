@@ -80,4 +80,34 @@ ayı rejimde küçül" profili maliyet sonrası XU100'ü geçebilir.
 
 | # | Tarih | Pencere | Sonuç | Karar | Not |
 |---|-------|---------|-------|-------|-----|
-| 2 | _(beklemede)_ | 5y | — | — | Overlay ön-kaydı yukarıda |
+| 2 | 2026-07-06 | 5y | ❌ GEÇİLMEDİ | NO-GO devam | Aşağıda |
+
+### Koşu #2 detayı (2026-07-06, GitHub Actions run 28824820981, 29 ticker)
+
+XU100 al-tut: **%+942.8** · Sharpe 1.81 · maksDD −22.9%
+
+| Hesap | Getiri | Sharpe | MaksDD | İşlem |
+|---|---|---|---|---|
+| Agresif | +623.7% | 2.10 | −24.6% | 389 |
+| **Overlay (deneme #2)** | **+499.7%** | **1.35** | −28.5% | 248 |
+| Trend-takip | +248.8% | 1.97 | −8.7% | 262 |
+| Dengeli | +215.5% | 1.67 | −18.7% | 314 |
+| Temkinli | +117.2% | 1.53 | −14.1% | 245 |
+
+**Dürüst okuma:** Nakit-sürtünmesi hipotezi kısmen doğrulandı — Overlay, sinyal
+profillerinin getirisini ikiye katladı (+499.7 vs +215-249). Ama al-tut'a hâlâ
+−443 puan geride VE Sharpe'ı endeksin altına düştü (1.35 < 1.81). Kayıp
+kaynakları: 248 işlemlik rotasyon maliyeti, momentum seçiminin bu pencerede
+endekse değer katmaması, ayı-küçülmesinin toparlanmaları kaçırması. İki koşuda
+da tutarlı tek sinyal: **Agresif Sharpe'ta endeksi geçiyor (2.10/2.08 > 1.81)**
+ama getiride asla — kaldıraçsız spot BIST'te bu kapatılamaz bir açık.
+
+**Deneme #3 (İZİN VERİLEN SON KOŞU — ön-kayıt, 2026-07-06):** En sade soru
+kaldı: "rejim zamanlaması TEK BAŞINA al-tut'a değer katıyor mu?" Kurallar:
+- Sepet: 29 hissenin TAMAMI eşit ağırlık, **rotasyon YOK** (momentum seçimi yok).
+- Tek kural: boğa (XU100 ≥ 200GHO) → %100; ayı → pozisyonların yarısı satılır
+  (%50); boğaya dönüşte geri alınır. Başka hiçbir işlem yok.
+- Fizik ve GEÇTİ tanımı aynı.
+- **Bu da geçemezse kapı KAPANIR** (kill criterion): bu sinyal setiyle BIST'te
+  al-tut'u yenme iddiası bırakılır; proje NEXT_STEPS §5'teki "destekli disiplin
+  aracı" rotasına döner. Deneme #4 açılmaz.
